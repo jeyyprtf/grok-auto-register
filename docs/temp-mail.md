@@ -55,7 +55,6 @@ routes = [
 PREFIX = "tmp"
 DEFAULT_DOMAINS = ["domainkamu.com"]
 DOMAINS = ["domainkamu.com"]
-JWT_SECRET = "acak-panjang-pakai-openssl-rand-hex-32"
 ENABLE_USER_CREATE_EMAIL = true
 ENABLE_USER_DELETE_EMAIL = true
 
@@ -63,7 +62,23 @@ ENABLE_USER_DELETE_EMAIL = true
 binding = "DB"
 database_name = "temp-email-db"
 database_id = "UUID-DARI-CREATE"
+
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
 ```
+
+Simpan JWT sebagai Worker Secret, bukan di TOML:
+
+```bash
+openssl rand -hex 32 | npx wrangler secret put JWT_SECRET
+```
+
+Wizard menyimpan salinan lokal di `~/.grok_manage.json` (permission `0600`) agar rerun tidak merotasi secret.
 
 Deploy:
 

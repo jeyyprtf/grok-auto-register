@@ -81,11 +81,15 @@ def save_json(path: Path, data: dict) -> None:
 
 
 def load_config() -> dict:
-    if CONFIG.is_file():
-        return load_json(CONFIG)
-    if CONFIG_EXAMPLE.is_file():
-        return load_json(CONFIG_EXAMPLE)
-    return {}
+    if not CONFIG.is_file():
+        return {}
+    try:
+        data = json.loads(CONFIG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"config.json tidak valid ({CONFIG}): {exc}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(f"config.json harus berisi JSON object: {CONFIG}")
+    return data
 
 
 def save_config(cfg: dict) -> None:
@@ -99,6 +103,7 @@ def load_state() -> dict:
 def save_state(st: dict) -> None:
     try:
         save_json(STATE_FILE, st)
+        STATE_FILE.chmod(0o600)
     except Exception:
         pass
 
@@ -147,19 +152,35 @@ def is_linux() -> bool:
 # ── status checks ────────────────────────────────────────────────────
 
 
+def project_python() -> str:
+    name = "python.exe" if sys.platform == "win32" else "python"
+    candidate = PROJECT / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / name
+    return str(candidate) if candidate.is_file() else sys.executable
+
+
 def check_python_deps() -> list[str]:
-    missing = []
-    for mod in ("requests", "DrissionPage", "curl_cffi"):
-        try:
-            __import__(mod)
-        except ImportError:
-            missing.append(mod)
-    return missing
+    modules = ("requests", "DrissionPage", "curl_cffi")
+    script = (
+        "import importlib, json\n"
+        f"mods={modules!r}\n"
+        "missing=[]\n"
+        "for mod in mods:\n"
+        " try: importlib.import_module(mod)\n"
+        " except Exception: missing.append(mod)\n"
+        "print(json.dumps(missing))\n"
+    )
+    try:
+        result = subprocess.run(
+            [project_python(), "-c", script], capture_output=True, text=True, check=True
+        )
+        return json.loads(result.stdout.strip().splitlines()[-1])
+    except Exception:
+        return list(modules)
 
 
 def check_tools() -> dict:
     return {
-        "python": sys.executable,
+        "python": project_python(),
         "node": which("node"),
         "pnpm": which("pnpm"),
         "npx": which("npx"),
@@ -202,7 +223,7 @@ def print_status() -> None:
 # ── temp-mail setup ──────────────────────────────────────────────────
 
 
-def ensure_wrangler_toml(domain: str, api_host: str, database_id: str, jwt: str) -> None:
+def ensure_wrangler_toml(domain: str, api_host: str, database_id: str) -> None:
     """Write minimal wrangler.toml from template + user values."""
     # ponytail: minimal vars only; full template stays for advanced users
     content = f'''name = "cloudflare_temp_email"
@@ -219,7 +240,6 @@ routes = [
 PREFIX = "tmp"
 DEFAULT_DOMAINS = ["{domain}"]
 DOMAINS = ["{domain}"]
-JWT_SECRET = "{jwt}"
 ENABLE_USER_CREATE_EMAIL = true
 ENABLE_USER_DELETE_EMAIL = true
 ENABLE_AUTO_REPLY = false
@@ -229,6 +249,14 @@ BLACK_LIST = ""
 binding = "DB"
 database_name = "temp-email-db"
 database_id = "{database_id}"
+
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
 '''
     WRANGLER_TOML.write_text(content, encoding="utf-8")
     print(f"  tulis {WRANGLER_TOML}")
@@ -338,8 +366,15 @@ def cmd_setup_temp_mail() -> None:
         print("  database_id kosong, batal")
         return
 
-    jwt = secrets.token_hex(32)
-    ensure_wrangler_toml(domain, api_host, database_id, jwt)
+    state = load_state()
+    jwt = str(state.get("worker_jwt_secret") or "")
+    if WRANGLER_TOML.is_file():
+        match = re.search(r'JWT_SECRET\s*=\s*"([^"]+)"', WRANGLER_TOML.read_text(encoding="utf-8"))
+        jwt = jwt or (match.group(1) if match else "")
+    jwt = jwt or secrets.token_hex(32)
+    state["worker_jwt_secret"] = jwt
+    save_state(state)
+    ensure_wrangler_toml(domain, api_host, database_id)
 
     # schema
     print("\n[4/5] Apply schema D1 remote ...")
@@ -362,6 +397,22 @@ def cmd_setup_temp_mail() -> None:
         r = run(["npx", "wrangler", "deploy", "--minify"], cwd=WORKER)
     if r.returncode != 0:
         print("  deploy gagal — coba ulang: cd temp-mail/worker && pnpm run deploy")
+        return
+
+    print("\n  Simpan JWT_SECRET sebagai Worker secret ...")
+    secret_cmd = (
+        [pnpm, "exec", "wrangler", "secret", "put", "JWT_SECRET"]
+        if tools["pnpm"]
+        else ["npx", "wrangler", "secret", "put", "JWT_SECRET"]
+    )
+    secret_result = subprocess.run(
+        secret_cmd,
+        cwd=str(WORKER),
+        input=jwt + "\n",
+        text=True,
+    )
+    if secret_result.returncode != 0:
+        print("  gagal menyimpan JWT_SECRET; deploy belum siap dipakai")
         return
 
     api_base = f"https://{api_host}"
@@ -463,13 +514,9 @@ def cmd_configure_run() -> dict:
     print("  Mode browser:")
     print("    1) headed (ada display / lokal)")
     print("    2) xvfb (VPS, recommended)")
-    print("    3) true headless (fragile CF)")
     mode = prompt("Pilih", "2" if is_linux() and not has_display() else "1")
-    if mode == "3":
-        cfg["browser_headless"] = True
-        cfg["browser_vps"] = True
-        cfg["cpa_headless"] = True
-    elif mode == "2":
+    mode = "2" if mode == "2" else "1"
+    if mode == "2":
         cfg["browser_headless"] = False
         cfg["browser_vps"] = True
         cfg["cpa_headless"] = False
@@ -504,24 +551,18 @@ def cmd_run_register() -> None:
             return
 
     st = load_state()
-    if st.get("browser_mode") is None:
+    if st.get("browser_mode") not in ("1", "2"):
         cfg = cmd_configure_run()
         st = load_state()
 
     mode = st.get("browser_mode") or ("2" if is_linux() and not has_display() else "1")
     use_xvfb = mode == "2" or (is_linux() and not has_display() and not cfg.get("browser_headless"))
 
-    py = sys.executable
-    # prefer venv python if exists
-    vpy = PROJECT / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
-    if vpy.is_file():
-        py = str(vpy)
-
-    cmd = [py, str(PROJECT / "grok_register_ttk.py"), "cli"]
+    cmd = [project_python(), str(PROJECT / "grok_register_ttk.py"), "cli"]
     if use_xvfb:
         if not which("xvfb-run"):
             print("  xvfb-run tidak ada. Install: sudo apt install -y xvfb")
-            print("  atau ganti mode headed/headless di menu configure.")
+            print("  atau ganti mode headed di menu configure.")
             return
         cmd = ["xvfb-run", "-a"] + cmd
 
@@ -638,7 +679,10 @@ def main() -> int:
     if cmd == "inject":
         cmd_inject(tui=True)
         return 0
-    if cmd in ("status", "check"):
+    if cmd == "status":
+        print_status()
+        return 0
+    if cmd == "check":
         print_status()
         cmd_check_mail()
         return 0

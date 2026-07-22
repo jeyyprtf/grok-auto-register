@@ -181,17 +181,31 @@ def build_payload(cpa: dict, source: Path, imported_at: str) -> dict | None:
     }
 
 
+def validate_schema(cur: sqlite3.Cursor) -> None:
+    columns = {row[1] for row in cur.execute("PRAGMA table_info(providerConnections)")}
+    required = {
+        "id", "provider", "authType", "name", "email", "priority",
+        "isActive", "data", "createdAt", "updatedAt",
+    }
+    missing = sorted(required - columns)
+    if missing:
+        raise RuntimeError(
+            "DB bukan schema 9router yang didukung; "
+            f"providerConnections kurang: {', '.join(missing)}"
+        )
+
+
 def inject(auth_dir: Path, db_path: Path, *, dry_run: bool = False) -> dict:
     files = list_cpa_files(auth_dir)
     if not files:
         raise FileNotFoundError(f"Tidak ada xai-*.json di: {auth_dir}")
-    if not dry_run:
-        if not db_path.is_file():
-            raise FileNotFoundError(f"DB 9router tidak ketemu: {db_path}")
+    if not db_path.is_file():
+        raise FileNotFoundError(f"DB 9router tidak ketemu: {db_path}")
 
     imported_at = now_iso()
-    conn = None if dry_run else sqlite3.connect(str(db_path))
-    cur = None if dry_run else conn.cursor()
+    conn = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True) if dry_run else sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+    validate_schema(cur)
 
     inserted = updated = skipped = 0
     lines: list[str] = []
@@ -210,16 +224,20 @@ def inject(auth_dir: Path, db_path: Path, *, dry_run: bool = False) -> dict:
             continue
         email = data["email"]
 
-        if dry_run:
-            inserted += 1
-            lines.append(f"  dry-run ok: {email}")
-            continue
-
         cur.execute(
             "SELECT id FROM providerConnections WHERE provider=? AND email=?",
             (PROVIDER, email),
         )
         row = cur.fetchone()
+        if dry_run:
+            if row:
+                updated += 1
+                lines.append(f"  dry-run would update: {email}")
+            else:
+                inserted += 1
+                lines.append(f"  dry-run would insert: {email}")
+            continue
+
         payload = json.dumps(data)
         if row:
             cur.execute(
@@ -255,15 +273,14 @@ def inject(auth_dir: Path, db_path: Path, *, dry_run: bool = False) -> dict:
             inserted += 1
             lines.append(f"  inserted {email}")
 
-    active: int | str = "n/a"
-    if conn is not None:
+    if not dry_run:
         conn.commit()
-        cur.execute(
-            "SELECT COUNT(*) FROM providerConnections WHERE provider=? AND isActive=1",
-            (PROVIDER,),
-        )
-        active = cur.fetchone()[0]
-        conn.close()
+    cur.execute(
+        "SELECT COUNT(*) FROM providerConnections WHERE provider=? AND isActive=1",
+        (PROVIDER,),
+    )
+    active = cur.fetchone()[0]
+    conn.close()
 
     return {
         "inserted": inserted,
