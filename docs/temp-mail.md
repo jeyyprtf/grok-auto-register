@@ -1,10 +1,17 @@
 # Temp mail Cloudflare (simpel)
 
-Script register butuh inbox buat kode verifikasi Grok. Kita pakai project open-source:
+Script register butuh inbox buat kode verifikasi Grok. Sumber: [cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) — **worker+db sudah di monorepo** folder `temp-mail/`.
 
-**https://github.com/dreamhunter2333/cloudflare_temp_email**
+---
 
-Repo itu **terpisah**. Di fullset ini cuma dipanggil lewat URL API.
+## Cara termudah (TUI)
+
+```bash
+python scripts/manage.py
+# menu 1) Setup temp-mail Worker
+```
+
+Atau: `python scripts/manage.py setup`
 
 ---
 
@@ -16,11 +23,10 @@ Repo itu **terpisah**. Di fullset ini cuma dipanggil lewat URL API.
 
 ---
 
-## Step kasar (CLI)
+## Step kasar (CLI manual)
 
 ```bash
-git clone https://github.com/dreamhunter2333/cloudflare_temp_email.git
-cd cloudflare_temp_email/worker
+cd temp-mail/worker
 pnpm install
 
 # buat D1

@@ -29,3 +29,9 @@ autoPortData/
 .wrangler/
 proxies_alive.txt
 tokens.txt
+
+# temp-mail Worker (secrets + install artifacts)
+temp-mail/worker/wrangler.toml
+temp-mail/worker/node_modules/
+temp-mail/worker/dist/
+temp-mail/**/.wrangler/

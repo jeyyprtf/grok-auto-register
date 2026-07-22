@@ -39,9 +39,11 @@ python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-cp config.example.json config.json
-# edit config.json — isi cloudflare_api_base + defaultDomains
+# TUI all-in-one (setup mail → deps → register → inject)
+python scripts/manage.py
 ```
+
+Atau manual: `cp config.example.json config.json` lalu isi `cloudflare_api_base` + `defaultDomains`.
 
 ---
 
@@ -120,14 +122,13 @@ Detail: [docs/9router.md](docs/9router.md)
 
 ## Temp mail Cloudflare
 
-Script butuh API temp mail (project [cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email)).
+Worker **sudah di repo** (`temp-mail/worker` + `temp-mail/db`), dari [cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email).
 
-Ringkas:
+```bash
+python scripts/manage.py setup   # domain → D1 → wrangler deploy → update config
+```
 
-1. Deploy Worker + D1  
-2. Email Routing catch-all → Worker  
-3. Isi `cloudflare_api_base` + `defaultDomains` di `config.json`
-
+Masih wajib: Email Routing catch-all di domain → Worker.  
 Panduan: [docs/temp-mail.md](docs/temp-mail.md)
 
 ---
@@ -148,12 +149,14 @@ Panduan: [docs/temp-mail.md](docs/temp-mail.md)
 .
 ├── grok_register_ttk.py      # main GUI/CLI
 ├── cpa_export.py / cpa_xai/  # mint Grok Build
+├── temp-mail/                # Worker CF (worker+db vendored)
 ├── scripts/
+│   ├── manage.py             # TUI setup + run + inject
 │   └── inject_cpa_to_9router.py
-├── docs/                     # panduan Indo
+├── docs/
 ├── config.example.json
 ├── requirements.txt
-└── AGENTS.md                 # catatan agent / setup lokal
+└── AGENTS.md
 ```
 
 ---

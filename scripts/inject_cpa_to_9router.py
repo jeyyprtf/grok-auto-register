@@ -27,19 +27,36 @@ STATE_FILE = Path.home() / ".grok_inject_9router.json"
 
 
 def default_db_candidates() -> list[Path]:
-    """Likely 9router DB locations per OS."""
+    """Likely 9router DB locations per OS (+ shallow home scan)."""
     home = Path.home()
     cands: list[Path] = [
         home / ".9router" / "db" / "data.sqlite",
+        home / ".9router" / "data.sqlite",
+        home / "9router" / "db" / "data.sqlite",
+        home / "9router" / "data.sqlite",
+        Path("/mnt/data/9router/db/data.sqlite"),
+        Path("/opt/9router/db/data.sqlite"),
+        Path("/var/lib/9router/db/data.sqlite"),
     ]
-    # Windows: %APPDATA%\9router\...
     appdata = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
     if appdata:
         cands.append(Path(appdata) / "9router" / "db" / "data.sqlite")
         cands.append(Path(appdata) / "9router" / "data.sqlite")
-    # Docker / custom common
-    cands.append(home / "9router" / "db" / "data.sqlite")
-    # de-dupe preserve order
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        cands.append(Path(xdg) / "9router" / "db" / "data.sqlite")
+    # env override
+    env_db = os.environ.get("NINEROUTER_DB") or os.environ.get("NINE_ROUTER_DB")
+    if env_db:
+        cands.insert(0, Path(env_db).expanduser())
+    # shallow: */.9router/db/data.sqlite under home (depth 2)
+    try:
+        for p in home.glob("*/.9router/db/data.sqlite"):
+            cands.append(p)
+        for p in home.glob(".*/.9router/db/data.sqlite"):
+            cands.append(p)
+    except Exception:
+        pass
     seen: set[str] = set()
     out: list[Path] = []
     for p in cands:
@@ -55,6 +72,39 @@ def find_default_db() -> Path:
         if p.is_file():
             return p
     return default_db_candidates()[0]
+
+
+def default_auth_candidates() -> list[Path]:
+    """Likely cpa_auths folders."""
+    home = Path.home()
+    cands = [
+        DEFAULT_AUTH,
+        PROJECT_ROOT / "cpa_auths",
+        home / "cpa_auths",
+        home / "grok-auto-register" / "cpa_auths",
+        Path("/mnt/data/grok/grok-auto-register/cpa_auths"),
+    ]
+    env = os.environ.get("GROK_CPA_AUTH_DIR")
+    if env:
+        cands.insert(0, Path(env).expanduser())
+    seen: set[str] = set()
+    out: list[Path] = []
+    for p in cands:
+        key = str(p)
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+    return out
+
+
+def find_default_auth() -> Path:
+    for p in default_auth_candidates():
+        if p.is_dir() and list(p.glob("xai-*.json")):
+            return p
+    for p in default_auth_candidates():
+        if p.is_dir():
+            return p
+    return DEFAULT_AUTH
 
 
 def load_state() -> dict:
@@ -280,12 +330,12 @@ def pick_from_list(title: str, options: list[str]) -> str | None:
 
 def tui() -> int:
     state = load_state()
-    auth_dir = Path(state["auth_dir"]).expanduser() if state.get("auth_dir") else DEFAULT_AUTH
+    auth_dir = Path(state["auth_dir"]).expanduser() if state.get("auth_dir") else find_default_auth()
     db_path = Path(state["db"]).expanduser() if state.get("db") else find_default_db()
     try:
         auth_dir = auth_dir.resolve()
     except Exception:
-        auth_dir = DEFAULT_AUTH
+        auth_dir = find_default_auth()
     try:
         db_path = db_path.resolve()
     except Exception:
@@ -296,7 +346,7 @@ def tui() -> int:
         print_status(auth_dir, db_path)
         print("  1) Ganti folder CPA (xai-*.json)")
         print("  2) Ganti path DB 9router (data.sqlite)")
-        print("  3) Deteksi DB 9router otomatis")
+        print("  3) Deteksi otomatis (DB + cpa_auths)")
         print("  4) Dry-run (cek file, tidak tulis DB)")
         print("  5) Inject sekarang")
         print("  6) Lihat daftar file CPA")
@@ -313,7 +363,12 @@ def tui() -> int:
             return 0
 
         if choice == "1":
-            raw = prompt("Path folder cpa_auths", str(auth_dir))
+            cands = [str(p) for p in default_auth_candidates()]
+            picked = pick_from_list("Folder CPA kandidat:", cands)
+            if picked is None:
+                raw = prompt("Path folder cpa_auths", str(auth_dir))
+            else:
+                raw = picked
             try:
                 auth_dir = resolve_path(raw)
                 save_state(auth_dir, db_path)
@@ -340,26 +395,43 @@ def tui() -> int:
             continue
 
         if choice == "3":
-            found = [p for p in default_db_candidates() if p.is_file()]
-            if not found:
+            found_db = [p for p in default_db_candidates() if p.is_file()]
+            found_auth = [p for p in default_auth_candidates() if p.is_dir() and list(p.glob("xai-*.json"))]
+            if found_auth:
+                print("  CPA folder ketemu:")
+                for i, p in enumerate(found_auth, 1):
+                    print(f"    {i}. {p} ({len(list(p.glob('xai-*.json')))} file)")
+                if len(found_auth) == 1:
+                    auth_dir = found_auth[0]
+                else:
+                    n = input("  Pakai auth nomor? ").strip()
+                    try:
+                        auth_dir = found_auth[int(n) - 1]
+                    except Exception:
+                        print("  auth: skip")
+            else:
+                print("  Tidak ketemu folder cpa_auths berisi xai-*.json")
+            if not found_db:
                 print("  Tidak ketemu data.sqlite di lokasi default.")
                 print("  Coba buka 9router sekali, atau pilih menu 2 (path manual).")
+                print("  Override: export NINEROUTER_DB=/path/to/data.sqlite")
             else:
-                print("  Ketemu:")
-                for i, p in enumerate(found, 1):
+                print("  DB ketemu:")
+                for i, p in enumerate(found_db, 1):
                     print(f"    {i}. {p}")
-                if len(found) == 1:
-                    db_path = found[0]
+                if len(found_db) == 1:
+                    db_path = found_db[0]
                 else:
-                    n = input("  Pakai nomor berapa? ").strip()
+                    n = input("  Pakai DB nomor? ").strip()
                     try:
-                        db_path = found[int(n) - 1]
+                        db_path = found_db[int(n) - 1]
                     except Exception:
-                        print("  batal")
+                        print("  DB: batal")
                         pause()
                         continue
-                save_state(auth_dir, db_path)
-                print(f"  → db = {db_path}")
+            save_state(auth_dir, db_path)
+            print(f"  → auth_dir = {auth_dir}")
+            print(f"  → db = {db_path}")
             pause()
             continue
 
@@ -479,7 +551,7 @@ def main() -> int:
         return tui()
 
     state = load_state()
-    auth_raw = args.auth_dir or state.get("auth_dir") or str(DEFAULT_AUTH)
+    auth_raw = args.auth_dir or state.get("auth_dir") or str(find_default_auth())
     db_raw = args.db or state.get("db") or str(find_default_db())
     auth_dir = resolve_path(auth_raw)
     db_path = resolve_path(db_raw)
