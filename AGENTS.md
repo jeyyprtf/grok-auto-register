@@ -10,6 +10,13 @@ Tool register Grok + mint CPA xAI (`xai-*.json`) + inject ke 9router. Bukan grok
 - Temp mail: Worker CF terpisah; isi `cloudflare_api_base` + `defaultDomains`
 - WARP OK; biarkan `proxy` / `cpa_proxy` kosong. Free SOCKS list sering gagal di DrissionPage.
 
+## VPS / headless
+- **Bukan** pure-API: tetap Chromium (DrissionPage)
+- Recommended: `browser_vps: true` + `xvfb-run -a python grok_register_ttk.py cli` (headed di virtual display)
+- `browser_headless: true` = true headless; CF/Turnstile fragile — last resort
+- Auto VPS flags bila Linux tanpa `DISPLAY`/`WAYLAND_DISPLAY`
+- Docs: `docs/vps.md`
+
 ## CPA → 9router
 - Output: `cpa_auths/xai-<email>.json` jika `cpa_export_enabled: true`
 - Injector: `scripts/inject_cpa_to_9router.py`

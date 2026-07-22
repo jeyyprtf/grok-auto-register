@@ -70,6 +70,16 @@ python grok_register_ttk.py cli
 # stop: Ctrl+C
 ```
 
+**VPS Ubuntu SSH-only** (virtual display — recommended):
+
+```bash
+sudo apt install -y xvfb chromium-browser
+# config: browser_vps true, browser_headless false
+xvfb-run -a python grok_register_ttk.py cli
+```
+
+Detail: [docs/vps.md](docs/vps.md)
+
 Hasil:
 
 - `accounts_*.txt` — email / password / SSO  

@@ -86,3 +86,15 @@ Detail: [9router.md](9router.md).
 - Internet & laptop tetap bisa dipake; cuma ada Chrome tambahan  
 - WARP mode **Traffic and DNS (HTTPS)** OK  
 - Jangan isi free SOCKS di `proxy` kecuali kamu yakin formatnya HTTP & stabil  
+
+## VPS (SSH only)
+
+Pakai **Xvfb + headed Chrome**, bukan pure headless:
+
+```bash
+sudo apt install -y xvfb chromium-browser
+# config.json: "browser_vps": true, "browser_headless": false
+xvfb-run -a python grok_register_ttk.py cli
+```
+
+Panduan: [vps.md](vps.md)

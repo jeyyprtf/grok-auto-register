@@ -81,6 +81,8 @@ DEFAULT_CONFIG = {
     "cpa_probe_after_write": False,
     "cpa_mint_async": True,
     "browser_use_custom_ua": False,
+    "browser_headless": False,
+    "browser_vps": False,
     "log_level": "info",
     "speed_log_interval_sec": 60,
 }
@@ -687,11 +689,24 @@ def export_cpa_xai_for_account(email, password, sso=None, log_callback=None, pag
         return {"ok": False, "error": str(exc)}
 
 
+def _want_browser_vps():
+    """VPS / container: no real display, or explicit browser_vps."""
+    if config.get("browser_vps"):
+        return True
+    if config.get("browser_headless"):
+        return True
+    if not sys.platform.startswith("linux"):
+        return False
+    return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
 def create_browser_options():
     """创建尽量贴近真实浏览器的启动参数。
 
     TUN 系统代理时请保持 config.proxy 为空，让 Chromium 走系统网络栈。
     不要默认 new_env / 强制 UA / 过多 flag，容易触发 Cloudflare「故障排除」。
+    VPS: browser_vps / no DISPLAY → --no-sandbox dll; browser_headless → headless
+    (CF/Turnstile lebih aman pakai xvfb-run + headed, bukan headless murni).
     """
     options = ChromiumOptions()
     options.set_timeouts(base=1)
@@ -714,6 +729,32 @@ def create_browser_options():
         "--no-default-browser-check",
     ):
         options.set_argument(flag)
+    if _want_browser_vps():
+        for flag in (
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--mute-audio",
+            "--window-size=1280,900",
+        ):
+            options.set_argument(flag)
+        for cand in (
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+        ):
+            if os.path.isfile(cand):
+                try:
+                    options.set_browser_path(cand)
+                except Exception:
+                    pass
+                break
+    if config.get("browser_headless"):
+        try:
+            options.headless(True)
+        except Exception:
+            options.set_argument("--headless=new")
     # 仅显式配置 proxy 时写入；TUN 模式保持空
     proxy = str(config.get("proxy", "") or "").strip()
     if proxy:
@@ -1744,6 +1785,16 @@ def tk_option_menu(parent, variable, values, width=12):
 
 def start_browser(log_callback=None):
     last_exc = None
+    if log_callback:
+        disp = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY") or ""
+        mode = "headless" if config.get("browser_headless") else "headed"
+        vps = _want_browser_vps()
+        log_callback(f"[*] browser mode={mode} vps={vps} DISPLAY={disp!r}")
+        if not disp and not config.get("browser_headless") and sys.platform.startswith("linux"):
+            log_callback(
+                "[!] no DISPLAY — pakai: xvfb-run -a python grok_register_ttk.py cli "
+                "(lebih aman utk CF) atau set browser_headless:true"
+            )
     for attempt in range(1, 5):
         try:
             _set_browser(Chromium(create_browser_options()))

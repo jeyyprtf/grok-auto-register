@@ -4,6 +4,17 @@
 
 Memang. “CLI” = tanpa jendela Tk GUI. Register & Turnstile tetap butuh Chrome beneran.
 
+## Bisa di VPS SSH-only?
+
+Bisa. Pakai **Xvfb** + Chromium headed:
+
+```bash
+xvfb-run -a python grok_register_ttk.py cli
+```
+
+Config: `browser_vps: true`, `browser_headless: false` (default).  
+True headless (`browser_headless: true`) sering kena Cloudflare. Lihat [vps.md](vps.md).
+
 ## Laptop lag / internet mati?
 
 Nggak mati. Cuma ada browser ekstra. `concurrent_count: 1` biasanya ringan. Browsing biasa tetap jalan.
