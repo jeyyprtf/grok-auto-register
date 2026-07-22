@@ -1,0 +1,3 @@
+UPSTREAM=https://github.com/dreamhunter2333/cloudflare_temp_email
+PINNED_VERSION=1.10.0 (worker package.json)
+NOTE=worker+db only; deploy via scripts/manage.py or pnpm in temp-mail/worker

@@ -2,7 +2,22 @@
 
 Bahasa santai, step by step.
 
-## 1. Clone & venv
+## Cara cepat (TUI)
+
+```bash
+git clone https://github.com/jeyyprtf/grok-auto-register.git
+cd grok-auto-register
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python scripts/manage.py
+```
+
+Menu: setup temp-mail → install deps → configure run → register → inject.
+
+---
+
+## 1. Clone & venv (manual)
 
 ```bash
 git clone https://github.com/jeyyprtf/grok-auto-register.git
@@ -36,11 +51,13 @@ Edit minimal:
 }
 ```
 
-Temp mail harus **sudah jalan** dulu → lihat [temp-mail.md](temp-mail.md).
+Temp mail: folder `temp-mail/` di monorepo, atau setup lewat TUI → [temp-mail.md](temp-mail.md).
 
 ## 3. Test API email (opsional)
 
 ```bash
+python scripts/manage.py status
+# atau
 python cf_mail_debug.py --api-base "https://mail-api.domainkamu.com" --domain "domainkamu.com"
 ```
 
