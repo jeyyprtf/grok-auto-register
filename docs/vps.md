@@ -7,6 +7,7 @@ Register **tetap butuh Chromium**. Bukan pure-API. Di VPS tanpa monitor: pakai *
 ```bash
 sudo apt update
 sudo apt install -y xvfb chromium-browser fonts-liberation
+# CLI tidak butuh tkinter. GUI desktop: sudo apt install python3-tk
 # atau: google-chrome-stable (repo Google)
 
 cd /path/ke/grok-auto-register

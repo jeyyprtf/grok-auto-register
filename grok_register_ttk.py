@@ -5,8 +5,6 @@ Grok 注册机 - TTK GUI 版本
 整合 DrissionPage_example.py, openai_register.py, batch_open_nsfw.py
 """
 
-import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
 import threading
 import datetime
 import time
@@ -20,6 +18,14 @@ import random
 import re
 import string
 import json
+
+# CLI/VPS: tkinter opsional (python3-tk sering belum terpasang di Ubuntu server)
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, scrolledtext
+except ImportError:  # pragma: no cover
+    tk = None
+    ttk = messagebox = scrolledtext = None
 
 os.environ.setdefault("TK_SILENCE_DEPRECATION", "1")
 
@@ -1735,7 +1741,7 @@ def tk_entry(parent, textvariable=None, width=30, **kwargs):
     )
 
 
-def tk_button(parent, text="", command=None, state=tk.NORMAL, **kwargs):
+def tk_button(parent, text="", command=None, state="normal", **kwargs):
     return tk.Button(
         parent,
         text=text,
@@ -4139,6 +4145,13 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1].strip().lower() in ("start", "cli", "--cli"):
         main_cli()
         return
+    if tk is None:
+        print(
+            "[!] tkinter tidak ada — pakai CLI: python grok_register_ttk.py cli\n"
+            "    atau install: sudo apt install python3-tk",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     root = tk.Tk()
     setup_light_theme(root)
     app = GrokRegisterGUI(root)

@@ -4,6 +4,12 @@
 
 Memang. “CLI” = tanpa jendela Tk GUI. Register & Turnstile tetap butuh Chrome beneran.
 
+## Error `No module named 'tkinter'` di VPS?
+
+Normal di Ubuntu server. **CLI tidak butuh tkinter** (update terbaru).  
+Pull code terbaru, lalu: `python grok_register_ttk.py cli`  
+Kalau mau GUI: `sudo apt install python3-tk`.
+
 ## Bisa di VPS SSH-only?
 
 Bisa. Pakai **Xvfb** + Chromium headed:
