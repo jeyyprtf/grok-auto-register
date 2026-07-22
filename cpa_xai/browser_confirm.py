@@ -606,7 +606,9 @@ def _cookie_banner_visible(text: str) -> bool:
         "我们使用 cookie",
         "接受所有 cookie",
         "accept all cookies",
+        "cookies settings",
         "cookie preferences",
+        "reject all",
     )
     return any(n in t or n in tl for n in strong)
 
@@ -626,8 +628,12 @@ def _dismiss_cookie_banner(page: Any, log: LogFn) -> bool:
         "全部允许",
         "接受所有",
         "接受全部",
+        "Accept All Cookies",
+        "Accept all cookies",
         "Accept all",
         "Accept All",
+        "Allow All Cookies",
+        "Allow all cookies",
         "Allow all",
         "Allow All",
         "I agree",
@@ -642,12 +648,16 @@ def _dismiss_cookie_banner(page: Any, log: LogFn) -> bool:
     # JS: click highest z-index / dialog button matching accept-all text
     try:
         ok = page.run_js(
-            """
-const want = new Set([
-  '全部允许','接受所有','接受全部','Accept all','Accept All','Allow all','Allow All','I agree','Agree'
-]);
+            r"""
+const want = [
+  '全部允许','接受所有','接受全部',
+  'accept all cookies','accept all','allow all cookies','allow all','i agree','agree'
+];
 const btns = Array.from(document.querySelectorAll('button, [role="button"], a'));
-const match = btns.find((b) => want.has(String(b.innerText || b.textContent || '').trim()));
+const match = btns.find((b) => {
+  const t = String(b.innerText || b.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return want.some((w) => t === w || t.includes(w));
+});
 if (match) { match.click(); return String(match.innerText || '').trim(); }
 // close icon on privacy dialog
 const close = document.querySelector(

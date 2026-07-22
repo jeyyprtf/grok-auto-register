@@ -2779,15 +2779,64 @@ def build_profile():
     return given_name, family_name, password
 
 
+def _dismiss_cookie_banner(log_callback=None):
+    """Dismiss OneTrust/xAI cookie overlay so register submit/SSO is not blocked."""
+    page = _get_page()
+    if page is None:
+        return False
+    try:
+        hit = page.run_js(
+            r"""
+function isVisible(node) {
+    if (!node) return false;
+    const style = window.getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+}
+const labels = [
+    'accept all cookies', 'accept all', 'allow all cookies', 'allow all',
+    'i agree', 'agree', '全部允许', '接受所有', '接受全部', '接受所有 cookie',
+    'reject all', 'reject all cookies', '全部拒绝'
+];
+const btns = Array.from(document.querySelectorAll('button, [role="button"], a, input[type="button"]'));
+for (const b of btns) {
+    if (!isVisible(b)) continue;
+    const t = String(b.innerText || b.textContent || b.value || b.getAttribute('aria-label') || '')
+        .replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!t) continue;
+    if (labels.some((l) => t === l || t.includes(l))) {
+        b.click();
+        return String(b.innerText || b.textContent || b.value || '').replace(/\s+/g, ' ').trim();
+    }
+}
+return '';
+            """
+        )
+        if hit:
+            if log_callback:
+                log_callback(f"[*] Cookie banner dismissed: {hit}")
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def fill_profile_and_submit(timeout=120, log_callback=None, cancel_callback=None):
     given_name, family_name, password = build_profile()
     deadline = time.time() + timeout
     form_filled_once = False
     wait_cf_since = None
     last_cf_retry_at = 0.0
+    last_cookie_dismiss_at = 0.0
 
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
+        now = time.time()
+        if now - last_cookie_dismiss_at >= 3:
+            if _dismiss_cookie_banner(log_callback=log_callback):
+                last_cookie_dismiss_at = now
+                sleep_with_cancel(0.5, cancel_callback)
         if not form_filled_once:
             filled = _get_page().run_js(
                 """
@@ -3019,6 +3068,7 @@ def wait_for_sso_cookie(timeout=120, log_callback=None, cancel_callback=None):
     last_seen_names = set()
     last_submit_retry = 0.0
     last_cf_retry_at = 0.0
+    last_cookie_dismiss_at = 0.0
     final_no_submit_state = ""
     final_no_submit_since = None
     final_no_submit_timeout = 25
@@ -3033,6 +3083,12 @@ def wait_for_sso_cookie(timeout=120, log_callback=None, cancel_callback=None):
 
             # 仍停留在“完成注册”页时，若 Cloudflare 已通过，周期性重试点击提交
             now = time.time()
+            if now - last_cookie_dismiss_at >= 3:
+                if _dismiss_cookie_banner(log_callback=log_callback):
+                    last_cookie_dismiss_at = now
+                    final_no_submit_state = ""
+                    final_no_submit_since = None
+                    sleep_with_cancel(0.5, cancel_callback)
             if now - last_submit_retry >= 2.5:
                 retried = _get_page().run_js(
                     r"""
@@ -3088,6 +3144,13 @@ return 'final-page-clicked-submit';
                 if log_callback and (retried == "final-page-clicked-submit" or (isinstance(retried, str) and retried.startswith("final-page-no-submit"))):
                     log_callback(f"[Debug] 最终页状态: {retried}")
                 if isinstance(retried, str) and retried.startswith("final-page-no-submit"):
+                    # Cookie overlay often hides real submit — dismiss before timeout
+                    if _dismiss_cookie_banner(log_callback=log_callback):
+                        last_cookie_dismiss_at = now
+                        final_no_submit_state = ""
+                        final_no_submit_since = None
+                        sleep_with_cancel(0.5, cancel_callback)
+                        continue
                     if retried != final_no_submit_state:
                         final_no_submit_state = retried
                         final_no_submit_since = now
