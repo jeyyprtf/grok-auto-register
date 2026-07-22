@@ -80,14 +80,16 @@ Hasil:
 
 ## Inject ke 9router
 
-```bash
-# laptop
-python scripts/inject_cpa_to_9router.py
+**Menu interaktif** (Linux / Windows / macOS) — tinggal pilih path:
 
-# VPS (setelah scp folder cpa_auths + script)
-python3 scripts/inject_cpa_to_9router.py \
-  --auth-dir ~/path/cpa_auths \
-  --db ~/.9router/db/data.sqlite
+```bash
+python scripts/inject_cpa_to_9router.py
+```
+
+Atau CLI:
+
+```bash
+python scripts/inject_cpa_to_9router.py -y --auth-dir ./cpa_auths --db ~/.9router/db/data.sqlite
 ```
 
 - Email **baru** → insert  

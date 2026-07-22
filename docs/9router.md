@@ -19,22 +19,39 @@ Data default: `~/.9router/db/data.sqlite`
 
 ## Inject credential (tanpa DBeaver)
 
-Dari root project:
+### Cara gampang — menu TUI (Linux / macOS / Windows)
 
 ```bash
-# cek dulu
-python scripts/inject_cpa_to_9router.py --dry-run
-
-# tulis ke DB
 python scripts/inject_cpa_to_9router.py
 ```
 
-Custom path:
+Muncul menu:
+
+1. ganti folder CPA  
+2. ganti path DB 9router  
+3. deteksi DB otomatis  
+4. dry-run  
+5. inject  
+6. list file  
+
+Path terakhir disimpan di `~/.grok_inject_9router.json` (Windows: home user).
+
+### CLI (otomatisasi / script)
 
 ```bash
-python scripts/inject_cpa_to_9router.py \
-  --auth-dir ./cpa_auths \
-  --db ~/.9router/db/data.sqlite
+# dry-run
+python scripts/inject_cpa_to_9router.py --dry-run --auth-dir ./cpa_auths --db ~/.9router/db/data.sqlite
+
+# inject langsung
+python scripts/inject_cpa_to_9router.py -y --auth-dir ./cpa_auths --db ~/.9router/db/data.sqlite
+```
+
+Windows PowerShell contoh:
+
+```powershell
+python scripts\inject_cpa_to_9router.py
+# atau
+python scripts\inject_cpa_to_9router.py -y --auth-dir .\cpa_auths --db "$env:USERPROFILE\.9router\db\data.sqlite"
 ```
 
 ### Batch baru (total 20, dll.)
