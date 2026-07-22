@@ -19,9 +19,13 @@ config.json
 config.local.json
 
 *.log
+log.txt
 .DS_Store
 .idea/
 .vscode/
 DrissionPage/
 autoPortData/
 .browser_profiles/
+.wrangler/
+proxies_alive.txt
+tokens.txt
