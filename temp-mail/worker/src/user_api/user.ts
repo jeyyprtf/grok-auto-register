@@ -46,8 +46,9 @@ export default {
         if (tmpcode) {
             return c.text(msgs.CodeAlreadySentMsg, 400)
         }
-        // generate code 6 digits and convert to string
-        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        // generate an unpredictable 6-digit code
+        const random = crypto.getRandomValues(new Uint32Array(1))[0];
+        const code = (100000 + random % 900000).toString();
         // send code to email
         try {
             await sendMail(c, settings.verifyMailSender, {
@@ -156,6 +157,9 @@ export default {
         ).run();
         if (!success) {
             return c.text(msgs.FailedToRegisterMsg, 400);
+        }
+        if (settings.enableMailVerify) {
+            await c.env.KV.delete(`temp-mail:${email}`)
         }
         const defaultRole = getStringValue(c.env.USER_DEFAULT_ROLE);
         if (!defaultRole) return c.json({ success: true })

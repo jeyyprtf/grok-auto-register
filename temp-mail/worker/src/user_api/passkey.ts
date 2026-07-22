@@ -9,7 +9,7 @@ import {
 
 import { Passkey } from '../models';
 import type { PublicKeyCredentialRequestOptionsJSON } from '@simplewebauthn/server';
-import { isoBase64URL } from '@simplewebauthn/server/helpers';
+import { isoBase64URL, isoUint8Array } from '@simplewebauthn/server/helpers';
 import i18n from '../i18n';
 
 export default {
@@ -62,7 +62,7 @@ export default {
         const options = await generateRegistrationOptions({
             rpName: c.env.TITLE || "Temp Mail",
             rpID: domain,
-            userID: new TextEncoder().encode(user.user_id.toString()),
+            userID: isoUint8Array.fromUTF8String(user.user_id.toString()),
             userName: user.user_email,
             userDisplayName: user.user_email,
             attestationType: 'none',
@@ -97,10 +97,11 @@ export default {
         }
 
         const {
-            id: credentialID, publicKey,
-            counter, deviceType, backedUp,
-            transports,
-        } = registrationInfo.credential;
+            credential: registrationCredential,
+            credentialDeviceType: deviceType,
+            credentialBackedUp: backedUp,
+        } = registrationInfo;
+        const { id: credentialID, publicKey, counter, transports } = registrationCredential;
 
         // Base64URL encode ArrayBuffers.
         const base64PublicKey = isoBase64URL.fromBuffer(publicKey);

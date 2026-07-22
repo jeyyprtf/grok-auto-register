@@ -67,7 +67,7 @@ DOMAINS = ["xxx.xxx1" , "xxx.xxx2"] # all domain names
 #    { domains = ["xxx.xxx1" , "xxx.xxx2"], role = "vip", prefix = "vip" },
 #    { domains = ["xxx.xxx1" , "xxx.xxx2"], role = "admin", prefix = "" },
 # ]
-JWT_SECRET = "xxx"
+# Set separately: npx wrangler secret put JWT_SECRET
 BLACK_LIST = ""
 # Allow users to create email addresses
 ENABLE_USER_CREATE_EMAIL = true
@@ -171,13 +171,14 @@ database_id = "xxx"
 # binding = "KV"
 # id = "xxxx"
 
-# ratelimit config for /api/new_address
-# [[unsafe.bindings]]
-# name = "RATE_LIMITER"
-# type = "ratelimit"
-# namespace_id = "1001"
-# # 10 requests per minute
-# simple = { limit = 10, period = 60 }
+# rate limit for /api/new_address and other public write endpoints
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
 
 # binding another worker service (parse the code or link), e.g. auth-inbox
 # [[services]]

@@ -14,7 +14,7 @@ import { CONSTANTS } from "../constants";
 import { compressText } from "../gzip";
 
 
-async function email(message: ForwardableEmailMessage, env: Bindings, ctx: ExecutionContext) {
+async function email(message: ForwardableEmailMessage, env: Bindings) {
     const toAddress = normalizeAddressDomain(message.to);
     if (await isBlocked(message.from, env)) {
         message.setReject("Reject from address");

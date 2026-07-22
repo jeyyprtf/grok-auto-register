@@ -5,7 +5,7 @@ import { WorkerMailerOptions } from 'worker-mailer';
 import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting, getAnotherWorkerList, hashPassword, getJsonObjectValue, getRandomSubdomainDomains, getDomainMapValue, normalizeDomains, trimLower } from './utils';
 import { unbindTelegramByAddress } from './telegram_api/common';
 import { CONSTANTS } from './constants';
-import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, WebhookMail, WebhookSettings } from './models';
+import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, RawMailRow, WebhookMail, WebhookSettings } from './models';
 import i18n from './i18n';
 
 const DEFAULT_NAME_REGEX = /[^a-z0-9]/g;
@@ -630,7 +630,7 @@ export const handleListQuery = async (
     const resultsQuery = `${query} order by ${orderClause} limit ? offset ?`;
     const { results } = await c.env.DB.prepare(resultsQuery).bind(
         ...params, limit, offset
-    ).all();
+    ).all<RawMailRow>();
     const count = offset == 0 ? await c.env.DB.prepare(
         countQuery
     ).bind(...params).first("count") : 0;
@@ -673,7 +673,7 @@ export const handleMailListQuery = async (
     const resultsQuery = `${query} order by ${orderClause} limit ? offset ?`;
     const { results } = await c.env.DB.prepare(resultsQuery).bind(
         ...params, limit, offset
-    ).all();
+    ).all<RawMailRow>();
     const resolvedResults = await resolveRawEmailList(results);
     const count = offset == 0 ? await c.env.DB.prepare(
         countQuery
@@ -734,7 +734,9 @@ export const commonParseMail = async (parsedEmailContext: ParsedEmailContext): P
             attachments: (parsedEmail.attachments || []).map(att => ({
                 filename: att.filename || "attachment",
                 mimeType: att.mimeType || "application/octet-stream",
-                content: new Uint8Array(att.content),
+                content: typeof att.content === "string"
+                    ? new TextEncoder().encode(att.content)
+                    : new Uint8Array(att.content),
                 disposition: att.disposition || "attachment",
             })),
         };

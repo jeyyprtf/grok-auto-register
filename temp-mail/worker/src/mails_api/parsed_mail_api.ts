@@ -2,8 +2,9 @@ import { Context } from 'hono'
 
 import { commonParseMail, handleMailListQuery, updateAddressUpdatedAt } from '../common'
 import { resolveRawEmailRow } from '../gzip'
+import type { RawMailRow } from '../models';
 
-const toParsedMailRow = async (row: Record<string, unknown>): Promise<Record<string, unknown>> => {
+const toParsedMailRow = async (row: RawMailRow): Promise<Record<string, unknown>> => {
     const raw = typeof row.raw === 'string' ? row.raw : '';
     const parsed = raw ? await commonParseMail({ rawEmail: raw }) : undefined;
     const { raw: _raw, ...rest } = row;
@@ -33,7 +34,7 @@ const listParsedMails = async (c: Context<HonoCustomType>) => {
         [address], limit, offset
     );
     if (listRes.status !== 200) return listRes;
-    const { results, count } = await listRes.json() as { results: Record<string, unknown>[], count: number };
+    const { results, count } = await listRes.json() as { results: RawMailRow[], count: number };
     const parsed = await Promise.all(results.map(toParsedMailRow));
     return c.json({ results: parsed, count });
 };
@@ -43,10 +44,10 @@ const getParsedMail = async (c: Context<HonoCustomType>) => {
     const { mail_id } = c.req.param();
     const row = await c.env.DB.prepare(
         `SELECT * FROM raw_mails where id = ? and address = ?`
-    ).bind(mail_id, address).first();
+    ).bind(mail_id, address).first<RawMailRow>();
     if (!row) return c.json(null);
     const resolved = await resolveRawEmailRow(row);
-    return c.json(await toParsedMailRow(resolved as Record<string, unknown>));
+    return c.json(await toParsedMailRow(resolved));
 };
 
 export default { listParsedMails, getParsedMail };
