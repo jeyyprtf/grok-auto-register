@@ -102,6 +102,7 @@ Detail: [9router.md](9router.md).
 - `concurrent_count: 1` — ringan  
 - Internet & laptop tetap bisa dipake; cuma ada Chrome tambahan  
 - WARP mode **Traffic and DNS (HTTPS)** OK  
+- Cek `curl https://www.cloudflare.com/cdn-cgi/trace | grep '^warp='` → harus `warp=on`  
 - Jangan isi free SOCKS di `proxy` kecuali kamu yakin formatnya HTTP & stabil  
 
 ## VPS (SSH only)

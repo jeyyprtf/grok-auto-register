@@ -141,6 +141,13 @@ Panduan: [docs/temp-mail.md](docs/temp-mail.md)
 | Free SOCKS list | Sering **gagal** di Chrome/DrissionPage — jangan andalkan |
 | Batch besar | Proxy HTTP/S residential berbayar (bukan free list) |
 
+Pastikan WARP benar-benar aktif sebelum run:
+
+```bash
+curl https://www.cloudflare.com/cdn-cgi/trace | grep '^warp='
+# harus: warp=on
+```
+
 ---
 
 ## Struktur folder

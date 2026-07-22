@@ -54,11 +54,15 @@ DEFAULT_CONFIG = {
     "cloudflare_path_accounts": "/api/new_address",
     "cloudflare_path_token": "/api/token",
     "cloudflare_path_messages": "/api/mails",
-    "proxy": "http://127.0.0.1:7890",
-    "enable_nsfw": True,
+    "defaultDomains": "",
+    "email_provider": "cloudflare",
+    "yyds_api_key": "",
+    "yyds_jwt": "",
+    "proxy": "",
+    "enable_nsfw": False,
     "register_count": 1,
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-    "grok2api_auto_add_local": True,
+    "grok2api_auto_add_local": False,
     "grok2api_local_token_file": "",
     "grok2api_pool_name": "ssoBasic",
     "grok2api_auto_add_remote": False,
@@ -68,9 +72,16 @@ DEFAULT_CONFIG = {
     "cpa_auth_dir": "cpa_auths",
     "cpa_proxy": "",
     "cpa_headless": False,
-    "cpa_probe_after_write": True,
+    "cpa_probe_after_write": False,
     "cpa_mint_timeout_sec": 240,
     "cpa_base_url": "https://cli-chat-proxy.grok.com/v1",
+    "cpa_headers": {
+        "x-grok-client-version": "0.2.93",
+        "x-xai-token-auth": "xai-grok-cli",
+        "x-authenticateresponse": "authenticate-response",
+        "x-grok-client-identifier": "grok-shell",
+        "User-Agent": "grok-shell/0.2.93 (linux; x86_64)",
+    },
     "cpa_force_standalone": False,
     "cpa_mint_cookie_inject": True,
     "cpa_mint_browser_reuse": True,
@@ -84,7 +95,6 @@ DEFAULT_CONFIG = {
     "token_only_file": "",
     "concurrent_count": 1,
     "browser_restart_every": 10,
-    "cpa_probe_after_write": False,
     "cpa_mint_async": True,
     "browser_use_custom_ua": False,
     "browser_headless": False,
@@ -255,9 +265,11 @@ def load_config():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-            config = {**DEFAULT_CONFIG, **loaded}
-        except Exception:
-            config = DEFAULT_CONFIG.copy()
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"config.json tidak valid ({CONFIG_FILE}): {exc}") from exc
+        if not isinstance(loaded, dict):
+            raise RuntimeError(f"config.json harus berisi JSON object: {CONFIG_FILE}")
+        config = {**DEFAULT_CONFIG, **loaded}
     return config
 
 
@@ -2310,7 +2322,7 @@ def fill_email_and_submit(timeout=45, log_callback=None, cancel_callback=None):
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
         filled = _get_page().run_js(
-            """
+            r"""
 const email = arguments[0];
 function isVisible(node) {
     if (!node) return false;
@@ -2780,46 +2792,17 @@ def build_profile():
 
 
 def _dismiss_cookie_banner(log_callback=None):
-    """Dismiss OneTrust/xAI cookie overlay so register submit/SSO is not blocked."""
+    """Use the shared xAI cookie-banner handler for registration pages."""
     page = _get_page()
     if page is None:
         return False
-    try:
-        hit = page.run_js(
-            r"""
-function isVisible(node) {
-    if (!node) return false;
-    const style = window.getComputedStyle(node);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-    const rect = node.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
-}
-const labels = [
-    'accept all cookies', 'accept all', 'allow all cookies', 'allow all',
-    'i agree', 'agree', '全部允许', '接受所有', '接受全部', '接受所有 cookie',
-    'reject all', 'reject all cookies', '全部拒绝'
-];
-const btns = Array.from(document.querySelectorAll('button, [role="button"], a, input[type="button"]'));
-for (const b of btns) {
-    if (!isVisible(b)) continue;
-    const t = String(b.innerText || b.textContent || b.value || b.getAttribute('aria-label') || '')
-        .replace(/\s+/g, ' ').trim().toLowerCase();
-    if (!t) continue;
-    if (labels.some((l) => t === l || t.includes(l))) {
-        b.click();
-        return String(b.innerText || b.textContent || b.value || '').replace(/\s+/g, ' ').trim();
-    }
-}
-return '';
-            """
-        )
-        if hit:
-            if log_callback:
-                log_callback(f"[*] Cookie banner dismissed: {hit}")
-            return True
-    except Exception:
-        pass
-    return False
+    from cpa_xai.browser_confirm import dismiss_cookie_banner
+
+    def log(message):
+        if log_callback:
+            log_callback(f"[*] {message}")
+
+    return dismiss_cookie_banner(page, log)
 
 
 def fill_profile_and_submit(timeout=120, log_callback=None, cancel_callback=None):
@@ -2834,8 +2817,8 @@ def fill_profile_and_submit(timeout=120, log_callback=None, cancel_callback=None
         raise_if_cancelled(cancel_callback)
         now = time.time()
         if now - last_cookie_dismiss_at >= 3:
+            last_cookie_dismiss_at = now
             if _dismiss_cookie_banner(log_callback=log_callback):
-                last_cookie_dismiss_at = now
                 sleep_with_cancel(0.5, cancel_callback)
         if not form_filled_once:
             filled = _get_page().run_js(
@@ -3084,8 +3067,8 @@ def wait_for_sso_cookie(timeout=120, log_callback=None, cancel_callback=None):
             # 仍停留在“完成注册”页时，若 Cloudflare 已通过，周期性重试点击提交
             now = time.time()
             if now - last_cookie_dismiss_at >= 3:
+                last_cookie_dismiss_at = now
                 if _dismiss_cookie_banner(log_callback=log_callback):
-                    last_cookie_dismiss_at = now
                     final_no_submit_state = ""
                     final_no_submit_since = None
                     sleep_with_cancel(0.5, cancel_callback)
@@ -3236,6 +3219,7 @@ class GrokRegisterGUI:
         self.ui_queue = queue.Queue()
         self.accounts_output_file = ""
         self.setup_ui()
+        self.root.after(50, self._drain_ui_queue)
 
     def setup_ui(self):
         load_config()
@@ -3432,6 +3416,21 @@ class GrokRegisterGUI:
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         line = f"[{timestamp}] {message}"
         print(line, flush=True)
+        if threading.current_thread() is not threading.main_thread():
+            self.ui_queue.put((self._append_log_line, (line,)))
+            return
+        self._append_log_line(line)
+
+    def _drain_ui_queue(self):
+        while True:
+            try:
+                callback, args = self.ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            callback(*args)
+        self.root.after(50, self._drain_ui_queue)
+
+    def _append_log_line(self, line):
         try:
             self.log_text.insert(tk.END, f"{line}\n")
             # 防止长时间运行日志区无限增长导致卡顿
@@ -3449,9 +3448,15 @@ class GrokRegisterGUI:
         self.log_text.delete(1.0, tk.END)
 
     def update_stats(self):
+        if threading.current_thread() is not threading.main_thread():
+            self.ui_queue.put((self.update_stats, ()))
+            return
         self.stats_var.set(f"成功: {self.success_count} | 失败: {self.fail_count}")
 
     def _set_running_ui(self, running):
+        if threading.current_thread() is not threading.main_thread():
+            self.ui_queue.put((self._set_running_ui, (running,)))
+            return
         self.is_running = running
         self.start_btn.config(state=tk.DISABLED if running else tk.NORMAL)
         self.stop_btn.config(state=tk.NORMAL if running else tk.DISABLED)
@@ -3631,18 +3636,17 @@ class GrokRegisterGUI:
                     finally:
                         local_attempts += 1
                         self.update_stats()
-                        if self.should_stop():
-                            break
-                        # 与稳定版/单 worker 一致：每账号完整重启，避免 SSO/TOS 会话残留落到 tos-gate
-                        if _get_browser() is None:
-                            start_browser(log_callback=log_fn)
-                        else:
-                            if restart_every > 0 and local_attempts % restart_every == 0:
-                                log_fn(
-                                    f"[*] Worker-{worker_id} 已处理 {local_attempts} 个账号，周期重启浏览器"
-                                )
-                            restart_browser(log_callback=log_fn)
-                        sleep_with_cancel(1, self.should_stop)
+                        if not self.should_stop():
+                            # 与稳定版/单 worker 一致：每账号完整重启，避免 SSO/TOS 会话残留落到 tos-gate
+                            if _get_browser() is None:
+                                start_browser(log_callback=log_fn)
+                            else:
+                                if restart_every > 0 and local_attempts % restart_every == 0:
+                                    log_fn(
+                                        f"[*] Worker-{worker_id} 已处理 {local_attempts} 个账号，周期重启浏览器"
+                                    )
+                                restart_browser(log_callback=log_fn)
+                            sleep_with_cancel(1, self.should_stop)
         finally:
             stop_browser()
 
@@ -3800,13 +3804,12 @@ class GrokRegisterGUI:
                 self.log(f"[-] 注册失败: {exc}")
             finally:
                 self.update_stats()
-                if self.should_stop():
-                    break
-                if _get_browser() is None:
-                    start_browser(log_callback=self.log)
-                else:
-                    restart_browser(log_callback=self.log)
-                sleep_with_cancel(1, self.should_stop)
+                if not self.should_stop():
+                    if _get_browser() is None:
+                        start_browser(log_callback=self.log)
+                    else:
+                        restart_browser(log_callback=self.log)
+                    sleep_with_cancel(1, self.should_stop)
         stop_browser()
 
 
@@ -4025,18 +4028,17 @@ def _cli_worker_loop(worker_id, task_queue, total_count, controller, accounts_ou
                     slot_done = True
                 finally:
                     local_attempts += 1
-                    if controller.should_stop():
-                        break
-                    # 与稳定版/单 worker 一致：每账号完整重启，避免 SSO/TOS 会话残留落到 tos-gate
-                    if _get_browser() is None:
-                        start_browser(log_callback=log_fn)
-                    else:
-                        if restart_every > 0 and local_attempts % restart_every == 0:
-                            log_fn(
-                                f"[*] Worker-{worker_id} 已处理 {local_attempts} 个账号，周期重启浏览器"
-                            )
-                        restart_browser(log_callback=log_fn)
-                    sleep_with_cancel(1, controller.should_stop)
+                    if not controller.should_stop():
+                        # 与稳定版/单 worker 一致：每账号完整重启，避免 SSO/TOS 会话残留落到 tos-gate
+                        if _get_browser() is None:
+                            start_browser(log_callback=log_fn)
+                        else:
+                            if restart_every > 0 and local_attempts % restart_every == 0:
+                                log_fn(
+                                    f"[*] Worker-{worker_id} 已处理 {local_attempts} 个账号，周期重启浏览器"
+                                )
+                            restart_browser(log_callback=log_fn)
+                        sleep_with_cancel(1, controller.should_stop)
     finally:
         stop_browser()
 
@@ -4152,13 +4154,12 @@ def run_registration_cli(count):
                     i += 1
                     cli_log(f"[-] 注册失败: {exc}")
                 finally:
-                    if controller.should_stop():
-                        break
-                    if _get_browser() is None:
-                        start_browser(log_callback=cli_log)
-                    else:
-                        restart_browser(log_callback=cli_log)
-                    sleep_with_cancel(1, controller.should_stop)
+                    if not controller.should_stop():
+                        if _get_browser() is None:
+                            start_browser(log_callback=cli_log)
+                        else:
+                            restart_browser(log_callback=cli_log)
+                        sleep_with_cancel(1, controller.should_stop)
     except KeyboardInterrupt:
         controller.stop()
         cli_log("[!] 收到 KeyboardInterrupt，正在停止并清理")

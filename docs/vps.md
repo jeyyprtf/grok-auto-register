@@ -34,8 +34,8 @@ cp config.example.json config.json
 | Key | Arti |
 |-----|------|
 | `browser_vps` | Flag VPS: `--no-sandbox`, path Chromium Linux, dll. Auto-on juga kalau Linux **tanpa** `DISPLAY` |
-| `browser_headless` | True headless Chromium. **Rentan** CF/Turnstile — last resort |
-| `cpa_headless` | Sama, cuma path mint CPA standalone |
+| `browser_headless` | Biarkan `false`; dua mode yang didukung tetap headed lokal atau headed lewat Xvfb |
+| `cpa_headless` | Biarkan `false` agar flow CPA memakai browser headed yang sama |
 
 **Rekomendasi:** `browser_vps: true`, `browser_headless: false`, jalanin lewat **xvfb-run**.
 
@@ -53,27 +53,9 @@ Log bagus kira-kira:
 [*] browser mode=headed vps=True DISPLAY=':99'
 ```
 
-Tanpa Xvfb + tanpa headless → warning `no DISPLAY` di log.
+Tanpa Xvfb akan muncul warning `no DISPLAY` di log; install Xvfb lalu ulangi.
 
-## 4. True headless (opsional, fragile)
-
-Kalau Xvfb tidak bisa:
-
-```json
-{
-  "browser_vps": true,
-  "browser_headless": true,
-  "cpa_headless": true
-}
-```
-
-```bash
-python grok_register_ttk.py cli
-```
-
-Kalau CF block / Turnstile gagal → balik ke Xvfb + headed.
-
-## 5. Inject 9router di VPS
+## 4. Inject 9router di VPS
 
 ```bash
 python scripts/inject_cpa_to_9router.py -y \

@@ -613,7 +613,7 @@ def _cookie_banner_visible(text: str) -> bool:
     return any(n in t or n in tl for n in strong)
 
 
-def _dismiss_cookie_banner(page: Any, log: LogFn) -> bool:
+def dismiss_cookie_banner(page: Any, log: LogFn) -> bool:
     """Dismiss xAI/OneTrust-style cookie/privacy modal so consent Allow is clickable.
 
     Prefer 全部允许 (Accept all). Never click bare 允许 here — that is OAuth consent.
@@ -623,47 +623,34 @@ def _dismiss_cookie_banner(page: Any, log: LogFn) -> bool:
     if not _cookie_banner_visible(text):
         return False
 
-    # Exact labels only — 允许 alone is OAuth, not cookie
-    labels = [
-        "全部允许",
-        "接受所有",
-        "接受全部",
-        "Accept All Cookies",
-        "Accept all cookies",
-        "Accept all",
-        "Accept All",
-        "Allow All Cookies",
-        "Allow all cookies",
-        "Allow all",
-        "Allow All",
-        "I agree",
-        "Agree",
-    ]
-    hit = _click_exact(page, labels, log, real=False)
-    if hit:
-        log(f"cookie banner dismissed via {hit!r}")
-        _sleep(0.8)
-        return True
-
-    # JS: click highest z-index / dialog button matching accept-all text
+    # Scope exact matches to a cookie dialog. A global "Agree" match can hit ToS/OAuth.
     try:
         ok = page.run_js(
             r"""
-const want = [
+const accept = [
   '全部允许','接受所有','接受全部',
   'accept all cookies','accept all','allow all cookies','allow all','i agree','agree'
 ];
-const btns = Array.from(document.querySelectorAll('button, [role="button"], a'));
-const match = btns.find((b) => {
-  const t = String(b.innerText || b.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-  return want.some((w) => t === w || t.includes(w));
-});
-if (match) { match.click(); return String(match.innerText || '').trim(); }
-// close icon on privacy dialog
-const close = document.querySelector(
-  '[aria-label="Close"], [aria-label="关闭"], button[class*="close"], [data-testid*="close"]'
-);
-if (close) { close.click(); return 'close'; }
+const reject = ['全部拒绝','reject all cookies','reject all','decline'];
+const norm = (node) => String(
+  node.innerText || node.textContent || node.value || node.getAttribute('aria-label') || ''
+).replace(/\s+/g, ' ').trim().toLowerCase();
+const visible = (node) => {
+  const style = window.getComputedStyle(node);
+  const rect = node.getBoundingClientRect();
+  return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+};
+const roots = Array.from(document.querySelectorAll(
+  '#onetrust-banner-sdk, #onetrust-pc-sdk, [id*="cookie" i], [class*="cookie-banner" i], [role="dialog"]'
+)).filter((node) => visible(node) && /cookie|隐私偏好|全部允许|全部拒绝|privacy preference/i.test(norm(node)));
+for (const root of roots) {
+  const buttons = Array.from(root.querySelectorAll('button, [role="button"], a, input[type="button"]')).filter(visible);
+  const match = buttons.find((node) => accept.includes(norm(node)))
+    || buttons.find((node) => reject.includes(norm(node)));
+  if (match) { const label = norm(match); match.click(); return label; }
+  const close = root.querySelector('[aria-label="Close"], [aria-label="关闭"], button[class*="close"], [data-testid*="close"]');
+  if (close && visible(close)) { close.click(); return 'close'; }
+}
 return '';
             """
         )
@@ -674,12 +661,6 @@ return '';
     except Exception as e:
         log(f"cookie banner JS dismiss failed: {e}")
 
-    # last resort: 全部拒绝 also clears the overlay
-    hit = _click_exact(page, ["全部拒绝", "Reject all", "Reject All", "Decline"], log, real=False)
-    if hit:
-        log(f"cookie banner dismissed via reject {hit!r}")
-        _sleep(0.8)
-        return True
     log("cookie banner visible but dismiss failed")
     return False
 
@@ -989,7 +970,7 @@ def approve_device_code(
 
         # Cookie / privacy modal first (blocks OAuth 允许 on consent page)
         if _cookie_banner_visible(text):
-            if _dismiss_cookie_banner(page, log):
+            if dismiss_cookie_banner(page, log):
                 _sleep(0.6)
                 continue
             # Modal still up: never click OAuth 允许 under the overlay
@@ -1004,7 +985,7 @@ def approve_device_code(
             phase = "consent"
             # double-check banner cleared this frame
             if _cookie_banner_visible(_visible_text(page)):
-                _dismiss_cookie_banner(page, log)
+                dismiss_cookie_banner(page, log)
                 _sleep(0.6)
                 continue
             # Prefer real click; React needs it to set form action=allow
@@ -1075,7 +1056,7 @@ def approve_device_code(
 
         # Cookie banner fallback (non-consent pages)
         if _cookie_banner_visible(text):
-            _dismiss_cookie_banner(page, log)
+            dismiss_cookie_banner(page, log)
             _sleep(0.4)
 
         # Sign-in chooser
@@ -1342,5 +1323,7 @@ def mint_with_browser(
             except Exception:
                 pass
         if own_browser is not None:
-            close_standalone(own_browser)
-            release_mint_browser(owned=False, success=success, force_quit=True, log=log)
+            if owned:
+                close_standalone(own_browser)
+            else:
+                release_mint_browser(owned=False, success=success, log=log)

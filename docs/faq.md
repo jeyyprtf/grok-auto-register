@@ -19,7 +19,7 @@ xvfb-run -a python grok_register_ttk.py cli
 ```
 
 Config: `browser_vps: true`, `browser_headless: false` (default).  
-True headless (`browser_headless: true`) sering kena Cloudflare. Lihat [vps.md](vps.md).
+Pilihan yang didukung hanya headed lokal atau headed lewat Xvfb. Lihat [vps.md](vps.md).
 
 ## Laptop lag / internet mati?
 
