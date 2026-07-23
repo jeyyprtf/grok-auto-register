@@ -74,29 +74,51 @@ def wrangler_args(tools: dict, *args: str) -> list[str]:
     return ["npx", "wrangler", *args]
 
 
-def check_wrangler_login(tools: dict) -> bool:
-    result = run(wrangler_args(tools, "whoami"), cwd=WORKER)
-    if result.returncode == 0:
+def print_api_token_guide(domain: str) -> None:
+    print("\n  --- Panduan API Token (server/VPS) ---")
+    print("  1) Buka https://dash.cloudflare.com/profile/api-tokens")
+    print("  2) Pilih Create Custom Token")
+    print("  3) Tambahkan permission Account (Edit):")
+    print("       Workers Scripts → Edit")
+    print("       D1 → Edit")
+    print("  4) Account Resources: Include hanya account yang dipakai")
+    print(f"  5) Tambahkan permission Zone untuk {domain}:")
+    print("       Workers Routes → Edit")
+    print("       Zone → Read")
+    print("  6) DNS → Edit hanya jika Wrangler perlu mengubah DNS custom domain")
+    print("  7) Buat token, lalu paste saat diminta (token tidak disimpan ke file).")
+
+
+def check_wrangler_login(tools: dict, domain: str = "example.com") -> bool:
+    print("\n  Metode autentikasi Wrangler:")
+    print("    1) OAuth browser (laptop / ada browser)")
+    print("    2) API Token (server/VPS tanpa browser)")
+    default = "2" if is_linux() and not has_display() else "1"
+    mode = prompt("Pilih metode", default)
+
+    if mode == "2":
+        print_api_token_guide(domain)
+        if not os.environ.get("CLOUDFLARE_API_TOKEN"):
+            token = getpass.getpass("  CLOUDFLARE_API_TOKEN (hidden): ").strip()
+            if token:
+                os.environ["CLOUDFLARE_API_TOKEN"] = token
+        else:
+            print("  CLOUDFLARE_API_TOKEN sudah ada di environment.")
+        if not os.environ.get("CLOUDFLARE_API_TOKEN"):
+            print("  Token kosong; setup dibatalkan.")
+            return False
+        result = run(wrangler_args(tools, "whoami"), cwd=WORKER)
+        if result.returncode != 0:
+            print("  Token tidak valid atau permission kurang; setup dibatalkan.")
+            return False
         return True
-    print("  Wrangler belum login atau token Cloudflare belum tersedia.")
-    if is_linux() and not has_display() and yn("Paste CLOUDFLARE_API_TOKEN untuk sesi ini?", True):
-        token = getpass.getpass("CLOUDFLARE_API_TOKEN: ").strip()
-        if token:
-            os.environ["CLOUDFLARE_API_TOKEN"] = token
-            if run(wrangler_args(tools, "whoami"), cwd=WORKER).returncode == 0:
-                return True
-        print("  Token kosong/tidak valid. Setup dibatalkan.")
-        return False
+
     if is_linux() and not has_display():
-        print("  Server tanpa browser tidak memakai OAuth Wrangler.")
-        print("  Buat API token di https://dash.cloudflare.com/profile/api-tokens")
-        print("  lalu jalankan: export CLOUDFLARE_API_TOKEN='token' && python3 scripts/manage.py setup")
-        return False
-    if not yn("Jalankan wrangler login sekarang?", True):
+        print("  OAuth membutuhkan browser. Pilih mode 2 untuk server/VPS.")
         return False
     login = run(wrangler_args(tools, "login"), cwd=WORKER)
     if login.returncode != 0:
-        print("  Login Wrangler gagal. Set CLOUDFLARE_API_TOKEN atau ulangi setup.")
+        print("  Login OAuth gagal; setup dibatalkan.")
         return False
     verified = run(wrangler_args(tools, "whoami"), cwd=WORKER)
     if verified.returncode != 0:
@@ -386,7 +408,7 @@ def cmd_setup_temp_mail() -> None:
 
     # wrangler whoami
     print("\n[2/5] Cek login Cloudflare (wrangler whoami) ...")
-    if not check_wrangler_login(tools):
+    if not check_wrangler_login(tools, domain):
         return
 
     # D1

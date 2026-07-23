@@ -55,6 +55,14 @@ class ManageTests(unittest.TestCase):
             databases = manage.list_d1_databases({"pnpm": None})
         self.assertEqual(manage.d1_id(databases[0]), "real-d1-uuid")
 
+    def test_server_auth_accepts_token_without_oauth(self):
+        with patch.dict(manage.os.environ, {}, clear=True), patch.object(
+            manage, "prompt", return_value="2"
+        ), patch.object(manage.getpass, "getpass", return_value="token"), patch.object(
+            manage, "run", return_value=CompletedProcess([], 0)
+        ):
+            self.assertTrue(manage.check_wrangler_login({"pnpm": None}, "example.com"))
+
 
 class InjectorTests(unittest.TestCase):
     def _write_auth(self, folder: Path, email: str) -> None:
