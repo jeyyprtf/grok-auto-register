@@ -36,6 +36,7 @@ class ManageTests(unittest.TestCase):
             manage.ensure_wrangler_toml("example.com", "mail.example.com", "db-id")
             config = manage.WRANGLER_TOML.read_text(encoding="utf-8")
             self.assertNotIn("JWT_SECRET", config)
+            self.assertIn("keep_vars = false", config)
             self.assertIn('name = "RATE_LIMITER"', config)
 
     def test_status_does_not_create_test_address(self):

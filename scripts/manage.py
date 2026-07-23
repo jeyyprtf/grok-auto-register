@@ -268,7 +268,7 @@ def ensure_wrangler_toml(domain: str, api_host: str, database_id: str) -> None:
 main = "src/worker.ts"
 compatibility_date = "2025-04-01"
 compatibility_flags = [ "nodejs_compat" ]
-keep_vars = true
+keep_vars = false
 
 routes = [
   {{ pattern = "{api_host}", custom_domain = true }},
