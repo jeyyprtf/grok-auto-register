@@ -87,6 +87,11 @@ def check_wrangler_login(tools: dict) -> bool:
                 return True
         print("  Token kosong/tidak valid. Setup dibatalkan.")
         return False
+    if is_linux() and not has_display():
+        print("  Server tanpa browser tidak memakai OAuth Wrangler.")
+        print("  Buat API token di https://dash.cloudflare.com/profile/api-tokens")
+        print("  lalu jalankan: export CLOUDFLARE_API_TOKEN='token' && python3 scripts/manage.py setup")
+        return False
     if not yn("Jalankan wrangler login sekarang?", True):
         return False
     login = run(wrangler_args(tools, "login"), cwd=WORKER)

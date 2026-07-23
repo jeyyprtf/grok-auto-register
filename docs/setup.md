@@ -28,6 +28,20 @@ pip install -r requirements.txt
 Di Linux, menu TUI juga bisa memasang **Chrome/Chromium**, Node/npm/pnpm, dan xvfb
 secara otomatis lewat menu **3**.
 
+### Wrangler di VPS tanpa browser
+
+Gunakan API Token, bukan OAuth login dari server. Buat token di
+<https://dash.cloudflare.com/profile/api-tokens> dengan izin minimum yang dibutuhkan
+Worker/D1 pada account dan zone terkait, lalu jalankan:
+
+```bash
+export CLOUDFLARE_API_TOKEN='token-kamu'
+python3 scripts/manage.py setup
+```
+
+Wizard akan menjalankan `wrangler whoami` untuk memverifikasi token. Token hanya
+dipakai dari environment proses dan tidak disimpan ke repo.
+
 ## 2. Config
 
 ```bash

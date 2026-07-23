@@ -130,6 +130,8 @@ python scripts/manage.py setup   # domain → D1 → wrangler deploy → update 
 
 Untuk clone baru di Linux, jalankan `python scripts/manage.py` lalu pilih menu **3**
 (auto-install Node/npm/pnpm, xvfb, Chromium) dan menu **2** (venv + Python deps).
+Di VPS tanpa browser, set `CLOUDFLARE_API_TOKEN` sebelum memilih setup Worker;
+OAuth Wrangler hanya cocok dijalankan dari laptop.
 
 Masih wajib: Email Routing catch-all di domain → Worker.  
 Panduan: [docs/temp-mail.md](docs/temp-mail.md)
