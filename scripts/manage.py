@@ -393,15 +393,13 @@ def cmd_setup_temp_mail() -> None:
     print("\n[3/5] D1 database ...")
     database_id = ""
     d1_list = list_d1_databases(tools)
-    named_d1 = next((entry for entry in d1_list or [] if entry.get("name") == "temp-email-db"), None)
+    if d1_list is None:
+        print("  Daftar D1 tidak dapat diverifikasi. Pastikan token punya permission D1 Edit.")
+        return
+    named_d1 = next((entry for entry in d1_list if entry.get("name") == "temp-email-db"), None)
     if named_d1:
         database_id = d1_id(named_d1)
         print(f"  pakai D1 temp-email-db: {database_id}")
-    if WRANGLER_TOML.is_file():
-        m = re.search(r'database_id\s*=\s*"([^"]+)"', WRANGLER_TOML.read_text(encoding="utf-8"))
-        if m and d1_list is None:
-            database_id = m.group(1)
-            print(f"  pakai database_id existing (daftar D1 tidak tersedia): {database_id}")
     if not database_id:
         if yn("Buat D1 baru (temp-email-db)?", True):
             r = subprocess.run(
