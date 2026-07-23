@@ -653,12 +653,22 @@ def cmd_run_register() -> None:
     mode = st.get("browser_mode") or ("2" if is_linux() and not has_display() else "1")
     use_xvfb = mode == "2" or (is_linux() and not has_display() and not cfg.get("browser_headless"))
 
+    tools = check_tools()
+    if not tools["chrome"]:
+        print("  Browser Chrome/Chromium belum terpasang.")
+        if is_linux() and yn("Auto-install browser sekarang?", True):
+            cmd_install_system()
+            tools = check_tools()
+        if not tools["chrome"]:
+            print("  Install Chromium lalu ulangi menu 6:")
+            print("    sudo apt update && sudo apt install -y chromium")
+            return
+    if use_xvfb and not tools["xvfb-run"]:
+        print("  xvfb-run tidak ada. Pilih menu 3 atau install: sudo apt install -y xvfb")
+        return
+
     cmd = [project_python(), str(PROJECT / "grok_register_ttk.py"), "cli"]
     if use_xvfb:
-        if not which("xvfb-run"):
-            print("  xvfb-run tidak ada. Install: sudo apt install -y xvfb")
-            print("  atau ganti mode headed di menu configure.")
-            return
         cmd = ["xvfb-run", "-a"] + cmd
 
     print()
