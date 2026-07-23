@@ -10,6 +10,7 @@ Stdlib only. Cross-platform (Linux / macOS / Windows).
 """
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import re
@@ -65,6 +66,38 @@ def which(cmd: str) -> str | None:
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = False) -> subprocess.CompletedProcess:
     print(f"  $ {' '.join(cmd)}")
     return subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=check)
+
+
+def wrangler_args(tools: dict, *args: str) -> list[str]:
+    if tools["pnpm"]:
+        return [tools["pnpm"], "exec", "wrangler", *args]
+    return ["npx", "wrangler", *args]
+
+
+def check_wrangler_login(tools: dict) -> bool:
+    result = run(wrangler_args(tools, "whoami"), cwd=WORKER)
+    if result.returncode == 0:
+        return True
+    print("  Wrangler belum login atau token Cloudflare belum tersedia.")
+    if is_linux() and not has_display() and yn("Paste CLOUDFLARE_API_TOKEN untuk sesi ini?", True):
+        token = getpass.getpass("CLOUDFLARE_API_TOKEN: ").strip()
+        if token:
+            os.environ["CLOUDFLARE_API_TOKEN"] = token
+            if run(wrangler_args(tools, "whoami"), cwd=WORKER).returncode == 0:
+                return True
+        print("  Token kosong/tidak valid. Setup dibatalkan.")
+        return False
+    if not yn("Jalankan wrangler login sekarang?", True):
+        return False
+    login = run(wrangler_args(tools, "login"), cwd=WORKER)
+    if login.returncode != 0:
+        print("  Login Wrangler gagal. Set CLOUDFLARE_API_TOKEN atau ulangi setup.")
+        return False
+    verified = run(wrangler_args(tools, "whoami"), cwd=WORKER)
+    if verified.returncode != 0:
+        print("  Login belum terverifikasi; setup dibatalkan.")
+        return False
+    return True
 
 
 def load_json(path: Path) -> dict:
@@ -280,11 +313,22 @@ def cmd_setup_temp_mail() -> None:
 
     tools = check_tools()
     if not tools["node"]:
-        print("  Install Node.js dulu: https://nodejs.org")
-        return
+        print("  Node.js belum ada.")
+        if not (is_linux() and yn("Auto-install dependency sistem sekarang?", True)):
+            print("  Install Node.js + npm lalu ulangi setup.")
+            return
+        cmd_install_system()
+        tools = check_tools()
+        if not tools["node"]:
+            return
     if not tools["pnpm"] and not tools["npx"]:
-        print("  Install pnpm: npm i -g pnpm")
-        return
+        npm = which("npm")
+        if npm and yn("pnpm belum ada. Install pnpm sekarang?", True):
+            if run([npm, "install", "-g", "pnpm"]).returncode == 0:
+                tools = check_tools()
+        if not tools["pnpm"] and not tools["npx"]:
+            print("  pnpm/npm tidak tersedia; ulangi setelah dependency terpasang.")
+            return
 
     domain = prompt("Domain email (xxx@DOMAIN)", load_config().get("defaultDomains") or "example.com")
     domain = domain.strip().lstrip("@")
@@ -318,18 +362,8 @@ def cmd_setup_temp_mail() -> None:
 
     # wrangler whoami
     print("\n[2/5] Cek login Cloudflare (wrangler whoami) ...")
-    wr = [pnpm if tools["pnpm"] else "npx", "wrangler"] if tools["pnpm"] else ["npx", "wrangler"]
-    if tools["pnpm"]:
-        who = run([pnpm, "exec", "wrangler", "whoami"], cwd=WORKER)
-    else:
-        who = run(["npx", "wrangler", "whoami"], cwd=WORKER)
-    if who.returncode != 0:
-        print("  Belum login. Jalankan:")
-        print(f"    cd {WORKER} && npx wrangler login")
-        if yn("Sudah login di terminal lain, lanjut?", False):
-            pass
-        else:
-            return
+    if not check_wrangler_login(tools):
+        return
 
     # D1
     print("\n[3/5] D1 database ...")
@@ -341,20 +375,10 @@ def cmd_setup_temp_mail() -> None:
             print(f"  pakai database_id existing: {database_id}")
     if not database_id:
         if yn("Buat D1 baru (temp-email-db)?", True):
-            if tools["pnpm"]:
-                r = subprocess.run(
-                    [pnpm, "exec", "wrangler", "d1", "create", "temp-email-db"],
-                    cwd=str(WORKER),
-                    capture_output=True,
-                    text=True,
-                )
-            else:
-                r = subprocess.run(
-                    ["npx", "wrangler", "d1", "create", "temp-email-db"],
-                    cwd=str(WORKER),
-                    capture_output=True,
-                    text=True,
-                )
+            r = subprocess.run(
+                wrangler_args(tools, "d1", "create", "temp-email-db"),
+                cwd=str(WORKER), capture_output=True, text=True,
+            )
             out = (r.stdout or "") + (r.stderr or "")
             print(out)
             database_id = parse_d1_create_output(out) or ""
@@ -382,29 +406,19 @@ def cmd_setup_temp_mail() -> None:
         print(f"  schema tidak ada: {DB_SCHEMA}")
         return
     schema_rel = os.path.relpath(DB_SCHEMA, WORKER)
-    if tools["pnpm"]:
-        r = run([pnpm, "exec", "wrangler", "d1", "execute", "temp-email-db", "--remote", f"--file={schema_rel}"], cwd=WORKER)
-    else:
-        r = run(["npx", "wrangler", "d1", "execute", "temp-email-db", "--remote", f"--file={schema_rel}"], cwd=WORKER)
+    r = run(wrangler_args(tools, "d1", "execute", "temp-email-db", "--remote", "--yes", f"--file={schema_rel}"), cwd=WORKER)
     if r.returncode != 0:
         print("  schema execute gagal (bisa sudah pernah di-apply — lanjut cek deploy)")
 
     # deploy
     print("\n[5/5] Deploy Worker ...")
-    if tools["pnpm"]:
-        r = run([pnpm, "run", "deploy"], cwd=WORKER)
-    else:
-        r = run(["npx", "wrangler", "deploy", "--minify"], cwd=WORKER)
+    r = run([pnpm, "run", "deploy"] if tools["pnpm"] else ["npx", "wrangler", "deploy", "--minify"], cwd=WORKER)
     if r.returncode != 0:
         print("  deploy gagal — coba ulang: cd temp-mail/worker && pnpm run deploy")
         return
 
     print("\n  Simpan JWT_SECRET sebagai Worker secret ...")
-    secret_cmd = (
-        [pnpm, "exec", "wrangler", "secret", "put", "JWT_SECRET"]
-        if tools["pnpm"]
-        else ["npx", "wrangler", "secret", "put", "JWT_SECRET"]
-    )
+    secret_cmd = wrangler_args(tools, "secret", "put", "JWT_SECRET")
     secret_result = subprocess.run(
         secret_cmd,
         cwd=str(WORKER),
@@ -479,15 +493,42 @@ def cmd_install_python() -> None:
     print(f"  activate: source {venv}/bin/activate" if not sys.platform == "win32" else f"  {venv}\\Scripts\\activate")
 
 
+def cmd_install_system() -> None:
+    """Install the small set of system tools needed by the VPS workflow."""
+    if not is_linux():
+        print("  Auto-install hanya tersedia untuk Linux; gunakan package manager OS ini.")
+        return
+    apt = which("apt-get")
+    if not apt:
+        print("  apt-get tidak ditemukan; install nodejs, npm, xvfb, dan chromium manual.")
+        return
+    prefix = [] if os.geteuid() == 0 else ([which("sudo")] if which("sudo") else None)
+    if prefix is None:
+        print("  Butuh root atau sudo untuk install paket sistem.")
+        return
+    packages = ["nodejs", "npm", "xvfb", "fonts-liberation"]
+    apt_cache = which("apt-cache")
+    if apt_cache and subprocess.run([apt_cache, "show", "chromium"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+        packages.append("chromium")
+    elif apt_cache and subprocess.run([apt_cache, "show", "chromium-browser"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+        packages.append("chromium-browser")
+    print("  Install paket sistem: " + ", ".join(packages))
+    if not yn("Lanjut?", True):
+        return
+    if run(prefix + [apt, "update"]).returncode != 0:
+        return
+    if run(prefix + [apt, "install", "-y", *packages]).returncode != 0:
+        return
+    npm = which("npm") or "/usr/bin/npm"
+    if run([npm, "install", "-g", "pnpm"]).returncode != 0:
+        print("  pnpm gagal di-install; jalankan npm install -g pnpm setelah memperbaiki npm.")
+    print("  Dependensi sistem selesai. Wrangler login akan ditawarkan saat setup Worker.")
+
+
 def cmd_hint_system() -> None:
     print()
-    print("  Linux VPS (recommended):")
-    print("    sudo apt update")
-    print("    sudo apt install -y xvfb chromium-browser fonts-liberation || sudo apt install -y xvfb chromium")
-    print("  Node (buat deploy Worker):")
-    print("    https://nodejs.org  lalu: npm i -g pnpm")
-    print("  Wrangler login:")
-    print(f"    cd {WORKER} && npx wrangler login")
+    print("  Pilih menu ini untuk auto-install Linux (nodejs, npm, pnpm, xvfb, chromium).")
+    print("  Wrangler login dijalankan interaktif dari menu Setup Worker.")
 
 
 # ── register run ─────────────────────────────────────────────────────
@@ -613,7 +654,7 @@ def menu() -> int:
         print("  SETUP")
         print("    1) Setup temp-mail Worker (domain → wrangler → deploy)")
         print("    2) Install Python deps (.venv + requirements)")
-        print("    3) Hint install system (xvfb / chromium / node)")
+        print("    3) Auto-install system deps (node / pnpm / xvfb / chromium)")
         print("    4) Cek API temp-mail (health + create address)")
         print()
         print("  RUN")
@@ -639,7 +680,7 @@ def menu() -> int:
             cmd_install_python()
             pause()
         elif choice == "3":
-            cmd_hint_system()
+            cmd_install_system()
             pause()
         elif choice == "4":
             cmd_check_mail()

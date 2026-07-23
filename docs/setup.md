@@ -7,13 +7,11 @@ Bahasa santai, step by step.
 ```bash
 git clone https://github.com/jeyyprtf/grok-auto-register.git
 cd grok-auto-register
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python scripts/manage.py
+python3 scripts/manage.py
 ```
 
-Menu: setup temp-mail → install deps → configure run → register → inject.
+Menu: pilih **3** untuk auto-install dependency sistem (Node/npm/pnpm, xvfb, Chromium),
+lalu **2** untuk membuat `.venv` dan install Python deps. Setelah itu setup temp-mail.
 
 ---
 
@@ -27,7 +25,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Pastikan **Chrome/Chromium** sudah terpasang.
+Di Linux, menu TUI juga bisa memasang **Chrome/Chromium**, Node/npm/pnpm, dan xvfb
+secara otomatis lewat menu **3**.
 
 ## 2. Config
 

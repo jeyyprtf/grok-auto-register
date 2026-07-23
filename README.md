@@ -128,6 +128,9 @@ Worker **sudah di repo** (`temp-mail/worker` + `temp-mail/db`), dari [cloudflare
 python scripts/manage.py setup   # domain → D1 → wrangler deploy → update config
 ```
 
+Untuk clone baru di Linux, jalankan `python scripts/manage.py` lalu pilih menu **3**
+(auto-install Node/npm/pnpm, xvfb, Chromium) dan menu **2** (venv + Python deps).
+
 Masih wajib: Email Routing catch-all di domain → Worker.  
 Panduan: [docs/temp-mail.md](docs/temp-mail.md)
 
