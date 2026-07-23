@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import patch
 
 from scripts import inject_cpa_to_9router as injector
@@ -44,6 +45,14 @@ class ManageTests(unittest.TestCase):
             self.assertEqual(manage.main(), 0)
         status.assert_called_once_with()
         check_mail.assert_not_called()
+
+    def test_d1_list_returns_database_uuid(self):
+        output = json.dumps([{"name": "temp-email-db", "uuid": "real-d1-uuid"}])
+        with patch.object(
+            manage.subprocess, "run", return_value=CompletedProcess([], 0, output, "")
+        ):
+            databases = manage.list_d1_databases({"pnpm": None})
+        self.assertEqual(manage.d1_id(databases[0]), "real-d1-uuid")
 
 
 class InjectorTests(unittest.TestCase):

@@ -309,6 +309,25 @@ def parse_d1_create_output(text: str) -> str | None:
     return m.group(1) if m else None
 
 
+def list_d1_databases(tools: dict) -> list[dict] | None:
+    result = subprocess.run(
+        wrangler_args(tools, "d1", "list", "--json"),
+        cwd=str(WORKER), capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print((result.stdout or "") + (result.stderr or ""))
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, list) else []
+
+
+def d1_id(entry: dict) -> str:
+    return str(entry.get("uuid") or entry.get("database_id") or entry.get("id") or "")
+
+
 def cmd_setup_temp_mail() -> None:
     print()
     print("--- Setup temp-mail Worker (Cloudflare) ---")
@@ -373,11 +392,16 @@ def cmd_setup_temp_mail() -> None:
     # D1
     print("\n[3/5] D1 database ...")
     database_id = ""
+    d1_list = list_d1_databases(tools)
+    named_d1 = next((entry for entry in d1_list or [] if entry.get("name") == "temp-email-db"), None)
+    if named_d1:
+        database_id = d1_id(named_d1)
+        print(f"  pakai D1 temp-email-db: {database_id}")
     if WRANGLER_TOML.is_file():
         m = re.search(r'database_id\s*=\s*"([^"]+)"', WRANGLER_TOML.read_text(encoding="utf-8"))
-        if m:
+        if m and d1_list is None:
             database_id = m.group(1)
-            print(f"  pakai database_id existing: {database_id}")
+            print(f"  pakai database_id existing (daftar D1 tidak tersedia): {database_id}")
     if not database_id:
         if yn("Buat D1 baru (temp-email-db)?", True):
             r = subprocess.run(
@@ -388,9 +412,13 @@ def cmd_setup_temp_mail() -> None:
             print(out)
             database_id = parse_d1_create_output(out) or ""
             if not database_id:
-                database_id = prompt("Paste database_id UUID manual")
+                print("  D1 gagal dibuat; jangan gunakan Account ID sebagai database_id.")
+                return
         else:
             database_id = prompt("database_id UUID existing")
+            if d1_list is not None and database_id not in {d1_id(entry) for entry in d1_list}:
+                print("  database_id tidak ditemukan di akun Cloudflare; setup dibatalkan")
+                return
     if not database_id:
         print("  database_id kosong, batal")
         return
@@ -413,7 +441,8 @@ def cmd_setup_temp_mail() -> None:
     schema_rel = os.path.relpath(DB_SCHEMA, WORKER)
     r = run(wrangler_args(tools, "d1", "execute", "temp-email-db", "--remote", "--yes", f"--file={schema_rel}"), cwd=WORKER)
     if r.returncode != 0:
-        print("  schema execute gagal (bisa sudah pernah di-apply — lanjut cek deploy)")
+        print("  schema execute gagal; deploy dibatalkan supaya tidak menghasilkan Worker rusak")
+        return
 
     # deploy
     print("\n[5/5] Deploy Worker ...")
