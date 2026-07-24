@@ -1251,7 +1251,8 @@ def mint_with_browser(
 
         def _poll() -> None:
             try:
-                time.sleep(2)
+                # Wait for first browser navigate before hammering token endpoint
+                time.sleep(max(int(sess.interval), 5))
                 tr = poll_device_token(
                     sess.device_code,
                     interval=max(sess.interval, 5),
@@ -1266,6 +1267,7 @@ def mint_with_browser(
             except BaseException as e:  # noqa: BLE001
                 err_box["err"] = e
                 stop_event.set()
+                log(f"token poll FAILED: {e}")
 
         t = threading.Thread(target=_poll, name="oauth-poll", daemon=True)
         t.start()

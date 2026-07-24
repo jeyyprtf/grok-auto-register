@@ -216,14 +216,17 @@ def poll_device_token(
     """
     log = log or _noop_log
     deadline = time.time() + max(expires_in - 5, 30)
-    sleep_for = max(interval, 1)
-    fast_poll_remaining = 3
+    # RFC 8628: honor server interval; never poll faster after slow_down.
+    # Aggressive "fast poll" + retries used to burn device_code → invalid_grant
+    # even when the browser UI already showed "Device Authorized".
+    sleep_for = max(int(interval), 5)
     net_streak = 0
     max_net_streak = 20
     while time.time() < deadline:
         if cancel and cancel():
             raise OAuthDeviceError("cancelled")
         try:
+            # retries=0: one HTTP attempt per poll tick (no burst that triggers slow_down)
             status, body = _post_form(
                 TOKEN_URL,
                 {
@@ -233,15 +236,14 @@ def poll_device_token(
                 },
                 timeout=timeout,
                 proxy=proxy,
-                retries=2,
-                retry_sleep=1.0,
+                retries=0,
             )
             net_streak = 0
         except BaseException as e:  # noqa: BLE001
             if not _is_transient_net_error(e):
                 raise
             net_streak += 1
-            wait = min(sleep_for + min(net_streak, 5), 20)
+            wait = min(sleep_for + min(net_streak, 5), 30)
             log(
                 f"oauth poll network blip ({net_streak}/{max_net_streak}): {e} "
                 f"— retry in {wait}s"
@@ -272,21 +274,23 @@ def poll_device_token(
             desc = str(body.get("error_description") or "")
         if err in ("authorization_pending", "slow_down"):
             if err == "slow_down":
+                # RFC 8628 §3.5: increase interval by 5s on each slow_down
                 sleep_for = min(sleep_for + 5, 30)
             log(f"oauth poll: {err} (sleep {sleep_for}s)")
-            actual_sleep = 2 if fast_poll_remaining > 0 else sleep_for
-            if fast_poll_remaining > 0:
-                fast_poll_remaining -= 1
-            time.sleep(actual_sleep)
+            time.sleep(sleep_for)
             continue
         if err in ("expired_token", "access_denied"):
-            raise OAuthDeviceError(f"device auth failed: {err}: {desc}")
+            raise OAuthDeviceError(f"device auth failed: {err}: {desc or body!r}")
         if status == 400 and err:
-            raise OAuthDeviceError(f"device auth token error: {err}: {desc or body}")
+            # invalid_grant often = polled too fast / code already burned / IP denied
+            raise OAuthDeviceError(
+                f"device auth token error: {err}: {desc or body!r} "
+                f"(status={status})"
+            )
         # 5xx / empty / proxy HTML — treat as soft error and keep polling
         if status >= 500 or status in (502, 503, 504) or not isinstance(body, dict):
             net_streak += 1
-            wait = min(sleep_for + 2, 20)
+            wait = min(sleep_for + 2, 30)
             log(f"oauth poll soft HTTP {status}: {body!r} — retry in {wait}s")
             if net_streak >= max_net_streak:
                 raise OAuthDeviceError(
