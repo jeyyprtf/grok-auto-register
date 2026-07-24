@@ -79,53 +79,126 @@ def wrangler_args(tools: dict, *args: str) -> list[str]:
 def print_api_token_guide(domain: str) -> None:
     print("\n  --- Panduan API Token (server/VPS) ---")
     print("  1) Buka https://dash.cloudflare.com/profile/api-tokens")
-    print("  2) Pilih Create Custom Token")
-    print("  3) Tambahkan permission Account (Edit):")
-    print("       Workers Scripts → Edit")
-    print("       D1 → Edit")
-    print("  4) Account Resources: Include hanya account yang dipakai")
-    print(f"  5) Tambahkan permission Zone untuk {domain}:")
-    print("       Workers Routes → Edit")
-    print("       Zone → Read")
-    print("  6) DNS → Edit hanya jika Wrangler perlu mengubah DNS custom domain")
-    print("  7) Buat token, lalu paste saat diminta (token tidak disimpan ke file).")
+    print("  2) Create Token → template Edit Cloudflare Workers (atau Custom)")
+    print("  3) Minimal: Account → Workers Scripts:Edit + D1:Edit")
+    print(f"  4) Zone {domain}: Workers Routes:Edit + Zone:Read (+ DNS:Edit jika custom domain)")
+    print("  5) Paste token di bawah — manage.py auto-set account (tidak perlu export manual).")
+
+
+def parse_account_id_from_whoami(text: str) -> str:
+    """Extract first Cloudflare account_id (32 hex) from wrangler whoami output."""
+    # Table often: Account Name | 51f22a2be069ddfd0dd04b2ad62f7029
+    for m in re.finditer(r"\b([0-9a-f]{32})\b", text or "", re.I):
+        return m.group(1).lower()
+    return ""
+
+
+def pin_cloudflare_account(tools: dict, account_id: str = "") -> str:
+    """Force CLOUDFLARE_ACCOUNT_ID to the account that matches the current token.
+
+    VPS shells often have a stale CLOUDFLARE_ACCOUNT_ID from another project;
+    wrangler then hits /accounts/<wrong>/d1 → auth error 10000.
+    """
+    aid = (account_id or "").strip().lower()
+    if not aid:
+        r = subprocess.run(
+            wrangler_args(tools, "whoami"),
+            cwd=str(WORKER),
+            capture_output=True,
+            text=True,
+        )
+        aid = parse_account_id_from_whoami((r.stdout or "") + (r.stderr or ""))
+    if not aid:
+        print("  WARN: account_id tidak terdeteksi dari whoami")
+        return ""
+    prev = (os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "").strip().lower()
+    os.environ["CLOUDFLARE_ACCOUNT_ID"] = aid
+    if prev and prev != aid:
+        print(f"  fix account_id: {prev[:8]}… → {aid}  (env lama salah/project lain)")
+    else:
+        print(f"  CLOUDFLARE_ACCOUNT_ID={aid}")
+    # persist for this user so next manage.py run doesn't need re-detect if env empty
+    st = load_state()
+    st["cloudflare_account_id"] = aid
+    save_state(st)
+    return aid
+
+
+def _read_api_token() -> str:
+    """Visible paste first — getpass often drops paste on SSH."""
+    print("  Paste API token (terlihat sekali di layar):")
+    token = input("  CLOUDFLARE_API_TOKEN: ").strip().strip("'\"")
+    if token:
+        print(f"  OK, {len(token)} karakter")
+        return token
+    try:
+        token = getpass.getpass("  (kosong) coba hidden: ").strip().strip("'\"")
+    except Exception:
+        token = ""
+    if token:
+        print(f"  OK, {len(token)} karakter (hidden)")
+    return token
 
 
 def check_wrangler_login(tools: dict, domain: str = "example.com") -> bool:
+    # restore last known good account id early (overwritten after whoami if needed)
+    st = load_state()
+    saved = str(st.get("cloudflare_account_id") or "").strip()
+    if saved and not (os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "").strip():
+        os.environ["CLOUDFLARE_ACCOUNT_ID"] = saved
+
     print("\n  Metode autentikasi Wrangler:")
-    print("    1) OAuth browser (laptop / ada browser)")
-    print("    2) API Token (server/VPS tanpa browser)")
+    print("    1) OAuth browser (laptop / ada display)")
+    print("    2) API Token (VPS / recommended di server)")
     default = "2" if is_linux() and not has_display() else "1"
     mode = prompt("Pilih metode", default)
 
     if mode == "2":
         print_api_token_guide(domain)
-        if not os.environ.get("CLOUDFLARE_API_TOKEN"):
-            token = getpass.getpass("  CLOUDFLARE_API_TOKEN (hidden): ").strip()
+        if not (os.environ.get("CLOUDFLARE_API_TOKEN") or "").strip():
+            token = _read_api_token()
             if token:
                 os.environ["CLOUDFLARE_API_TOKEN"] = token
         else:
-            print("  CLOUDFLARE_API_TOKEN sudah ada di environment.")
-        if not os.environ.get("CLOUDFLARE_API_TOKEN"):
+            print("  CLOUDFLARE_API_TOKEN sudah di env")
+        if not (os.environ.get("CLOUDFLARE_API_TOKEN") or "").strip():
             print("  Token kosong; setup dibatalkan.")
             return False
-        result = run(wrangler_args(tools, "whoami"), cwd=WORKER)
+        result = subprocess.run(
+            wrangler_args(tools, "whoami"),
+            cwd=str(WORKER),
+            capture_output=True,
+            text=True,
+        )
+        out = (result.stdout or "") + (result.stderr or "")
+        print(out[-1200:] if len(out) > 1200 else out)
         if result.returncode != 0:
             print("  Token tidak valid atau permission kurang; setup dibatalkan.")
             return False
+        if not pin_cloudflare_account(tools, parse_account_id_from_whoami(out)):
+            # still try with whatever env has
+            pass
         return True
 
     if is_linux() and not has_display():
-        print("  OAuth membutuhkan browser. Pilih mode 2 untuk server/VPS.")
+        print("  OAuth butuh browser. Pilih mode 2 (API Token).")
         return False
     login = run(wrangler_args(tools, "login"), cwd=WORKER)
     if login.returncode != 0:
         print("  Login OAuth gagal; setup dibatalkan.")
         return False
-    verified = run(wrangler_args(tools, "whoami"), cwd=WORKER)
+    verified = subprocess.run(
+        wrangler_args(tools, "whoami"),
+        cwd=str(WORKER),
+        capture_output=True,
+        text=True,
+    )
+    out = (verified.stdout or "") + (verified.stderr or "")
+    print(out[-1200:] if len(out) > 1200 else out)
     if verified.returncode != 0:
         print("  Login belum terverifikasi; setup dibatalkan.")
         return False
+    pin_cloudflare_account(tools, parse_account_id_from_whoami(out))
     return True
 
 
@@ -293,15 +366,23 @@ def print_status() -> None:
 # ── temp-mail setup ──────────────────────────────────────────────────
 
 
-def ensure_wrangler_toml(domain: str, api_host: str, database_id: str) -> None:
+def ensure_wrangler_toml(
+    domain: str,
+    api_host: str,
+    database_id: str,
+    account_id: str = "",
+) -> None:
     """Write minimal wrangler.toml from template + user values."""
+    # pin account so stale CLOUDFLARE_ACCOUNT_ID from other projects cannot win
+    aid = (account_id or os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "").strip()
+    account_line = f'account_id = "{aid}"\n' if aid else ""
     # ponytail: minimal vars only; full template stays for advanced users
     content = f'''name = "cloudflare_temp_email"
 main = "src/worker.ts"
 compatibility_date = "2025-04-01"
 compatibility_flags = [ "nodejs_compat" ]
 keep_vars = false
-
+{account_line}
 routes = [
   {{ pattern = "{api_host}", custom_domain = true }},
 ]
@@ -329,7 +410,7 @@ namespace_id = "1001"
   period = 60
 '''
     WRANGLER_TOML.write_text(content, encoding="utf-8")
-    print(f"  tulis {WRANGLER_TOML}")
+    print(f"  tulis {WRANGLER_TOML}" + (f" (account_id={aid})" if aid else ""))
 
 
 def parse_d1_create_output(text: str) -> str | None:
@@ -417,17 +498,24 @@ def cmd_setup_temp_mail() -> None:
         print("  pnpm install gagal")
         return
 
-# wrangler whoami
+# wrangler whoami + pin account_id (fixes stale CLOUDFLARE_ACCOUNT_ID)
     print("\n[2/5] Cek login Cloudflare (wrangler whoami) ...")
     if not check_wrangler_login(tools, domain):
         return
+    account_id = pin_cloudflare_account(tools)
 
     # D1
     print("\n[3/5] D1 database ...")
     database_id = ""
     d1_list = list_d1_databases(tools)
+    if d1_list is None and account_id:
+        # one retry after hard-pin (env may have been wrong mid-command)
+        os.environ["CLOUDFLARE_ACCOUNT_ID"] = account_id
+        d1_list = list_d1_databases(tools)
     if d1_list is None:
-        print("  Daftar D1 tidak dapat diverifikasi. Pastikan token punya permission D1 Edit.")
+        print("  Daftar D1 gagal.")
+        print("  Cek: token D1:Edit, dan account_id cocok dengan token.")
+        print(f"  Sekarang CLOUDFLARE_ACCOUNT_ID={os.environ.get('CLOUDFLARE_ACCOUNT_ID','(kosong)')}")
         return
     named_d1 = next((entry for entry in d1_list if entry.get("name") == "temp-email-db"), None)
     if named_d1:
@@ -462,7 +550,7 @@ def cmd_setup_temp_mail() -> None:
     jwt = jwt or secrets.token_hex(32)
     state["worker_jwt_secret"] = jwt
     save_state(state)
-    ensure_wrangler_toml(domain, api_host, database_id)
+    ensure_wrangler_toml(domain, api_host, database_id, account_id=account_id)
 
     # schema
     print("\n[4/5] Apply schema D1 remote ...")
