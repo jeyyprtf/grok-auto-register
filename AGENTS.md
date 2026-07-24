@@ -19,7 +19,13 @@ Monorepo tooling: **temp-mail Worker** + **register Grok** + **mint CPA xAI** + 
 - Docs: `docs/vps.md`
 
 ## CPA → 9router
-- Output: `cpa_auths/xai-<email>.json` jika `cpa_export_enabled: true`
+- Durable: `accounts_*.txt` = `email----password----sso` (bukan OAuth token)
+- OAuth CPA (`cpa_auths/xai-*.json`) short-lived — mint saat mau pakai, jangan stockpile
+- Split workflow (recommended):
+  1. register (`cpa_export_enabled: false`) → `accounts_*.txt`
+  2. `python scripts/mint_cpa_from_accounts.py` (atau manage menu 7) → `cpa_auths/`
+  3. inject 9router (manage menu 8)
+- Output mint: `cpa_auths/xai-<email>.json` (juga bisa on-register jika `cpa_export_enabled: true`)
 - Injector: `scripts/inject_cpa_to_9router.py` (tetap terpisah, stdlib)
   - **TUI default** (tanpa flag): menu interaktif
   - CLI: `--auth-dir` `--db` `--dry-run` `-y` / `--yes` `--tui`

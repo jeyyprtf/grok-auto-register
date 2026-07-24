@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""TUI setup + manage fullset: temp-mail Worker, register Grok, inject 9router.
+"""TUI setup + manage fullset: temp-mail Worker, register Grok, mint CPA, inject 9router.
 
 Stdlib only. Cross-platform (Linux / macOS / Windows).
 
   python scripts/manage.py          # menu
   python scripts/manage.py setup    # wizard setup
-  python scripts/manage.py run      # register (pakai config)
+  python scripts/manage.py run      # register → accounts_*.txt
+  python scripts/manage.py mint     # mint CPA dari accounts_*.txt
   python scripts/manage.py inject   # inject TUI
 """
 from __future__ import annotations
@@ -32,6 +33,7 @@ WRANGLER_TOML = WORKER / "wrangler.toml"
 WRANGLER_TEMPLATE = WORKER / "wrangler.toml.template"
 STATE_FILE = Path.home() / ".grok_manage.json"
 INJECT_SCRIPT = PROJECT / "scripts" / "inject_cpa_to_9router.py"
+MINT_SCRIPT = PROJECT / "scripts" / "mint_cpa_from_accounts.py"
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -209,6 +211,11 @@ def is_linux() -> bool:
     return sys.platform.startswith("linux")
 
 
+def is_vps_like() -> bool:
+    """Headless Linux (no GUI) — wrangler login browser tidak bisa."""
+    return is_linux() and not has_display()
+
+
 # ── status checks ────────────────────────────────────────────────────
 
 
@@ -272,6 +279,9 @@ def print_status() -> None:
     print(f"  node/pnpm   : {bool(tools['node'])} / {bool(tools['pnpm'] or tools['npx'])}")
     print(f"  xvfb-run    : {bool(tools['xvfb-run'])}  chrome: {bool(tools['chrome'])}")
     print(f"  DISPLAY     : {os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY') or '(none)'}")
+    print(f"  setup mode  : {'VPS/headless (CF token)' if is_vps_like() else 'desktop'}")
+    tok = bool(os.environ.get("CLOUDFLARE_API_TOKEN", "").strip())
+    print(f"  CF API token: {'ada di env' if tok else ('belum (diminta saat setup)' if is_vps_like() else 'opsional')}")
     print(f"  pip deps    : {'OK' if not missing else 'kurang: ' + ', '.join(missing)}")
     if api:
         code, body = http_get(f"{api}/health_check")
@@ -383,6 +393,7 @@ def cmd_setup_temp_mail() -> None:
     api_host = re.sub(r"^https?://", "", api_host).rstrip("/")
 
     print()
+    print(f"  mode setup  : {'VPS/headless' if is_vps_like() else 'desktop'}")
     print("  Pastikan di Cloudflare dashboard:")
     print(f"    1) Domain {domain} sudah di CF (DNS active)")
     print(f"    2) Nanti: Email Routing ON + catch-all → Worker cloudflare_temp_email")
@@ -406,7 +417,7 @@ def cmd_setup_temp_mail() -> None:
         print("  pnpm install gagal")
         return
 
-    # wrangler whoami
+# wrangler whoami
     print("\n[2/5] Cek login Cloudflare (wrangler whoami) ...")
     if not check_wrangler_login(tools, domain):
         return
@@ -620,8 +631,14 @@ def cmd_configure_run() -> dict:
         cfg["browser_vps"] = False
         cfg["cpa_headless"] = False
 
-    auto_inject = yn("Auto inject ke 9router setelah register?", False)
-    cfg["cpa_export_enabled"] = True if auto_inject or cfg.get("cpa_export_enabled", True) else cfg.get("cpa_export_enabled", True)
+    mint_on_register = yn(
+        "Mint CPA OAuth saat register? (N = register-only, mint belakangan via menu 7)",
+        bool(cfg.get("cpa_export_enabled", True)),
+    )
+    cfg["cpa_export_enabled"] = mint_on_register
+    auto_inject = False
+    if mint_on_register:
+        auto_inject = yn("Auto inject ke 9router setelah register?", False)
 
     st = load_state()
     st["auto_inject"] = auto_inject
@@ -629,6 +646,7 @@ def cmd_configure_run() -> dict:
     save_state(st)
     save_config(cfg)
     print("  config disimpan.")
+    print(f"  cpa_export_enabled={cfg['cpa_export_enabled']} (register-only={'ya' if not mint_on_register else 'tidak'})")
     return cfg
 
 
@@ -709,6 +727,64 @@ def cmd_inject(tui: bool = True) -> None:
     run(args, cwd=PROJECT)
 
 
+def cmd_mint_cpa() -> None:
+    """Mint OAuth CPA dari accounts_*.txt (workflow terpisah dari register)."""
+    if not MINT_SCRIPT.is_file():
+        print(f"  script hilang: {MINT_SCRIPT}")
+        return
+    cfg = load_config()
+    files = sorted(PROJECT.glob("accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        print("  tidak ada accounts_*.txt — register dulu (menu 6)")
+        return
+    print("  File accounts (terbaru dulu):")
+    for i, p in enumerate(files[:15], 1):
+        try:
+            n = sum(1 for line in p.read_text(encoding="utf-8", errors="replace").splitlines() if "----" in line)
+        except Exception:
+            n = "?"
+        print(f"    {i}) {p.name}  ({n} baris)")
+    pick = prompt("Pilih nomor / path / Enter=terbaru", "1")
+    if pick.isdigit() and 1 <= int(pick) <= min(15, len(files)):
+        acc = files[int(pick) - 1]
+    elif pick and Path(pick).expanduser().is_file():
+        acc = Path(pick).expanduser()
+    else:
+        acc = files[0]
+    delay = prompt("Jeda antar mint (detik)", "45")
+    try:
+        delay_f = max(0.0, float(delay))
+    except ValueError:
+        delay_f = 45.0
+    limit = prompt("Limit akun (0=all)", "0")
+    dry = yn("Dry-run dulu?", False)
+
+    py = project_python()
+    cmd = [
+        py,
+        str(MINT_SCRIPT),
+        "--accounts",
+        str(acc),
+        "--delay",
+        str(delay_f),
+        "--limit",
+        str(limit or "0"),
+        "-y",
+    ]
+    if dry:
+        cmd.append("--dry-run")
+
+    use_xvfb = is_linux() and not has_display()
+    if use_xvfb:
+        if not which("xvfb-run"):
+            print("  xvfb-run tidak ada. Install: sudo apt install -y xvfb")
+            return
+        cmd = ["xvfb-run", "-a"] + cmd
+
+    print(f"\n  Jalankan: {' '.join(cmd)}\n")
+    run(cmd, cwd=PROJECT)
+
+
 # ── main menu ────────────────────────────────────────────────────────
 
 
@@ -722,9 +798,10 @@ def menu() -> int:
         print("    4) Cek API temp-mail (health + create address)")
         print()
         print("  RUN")
-        print("    5) Configure run (jumlah akun, headed/xvfb, auto-inject)")
-        print("    6) Jalankan register")
-        print("    7) Inject CPA → 9router (TUI terpisah)")
+        print("    5) Configure run (jumlah, headed/xvfb, register-only/mint)")
+        print("    6) Jalankan register  → accounts_*.txt")
+        print("    7) Mint CPA OAuth     → cpa_auths/xai-*.json  (dari accounts)")
+        print("    8) Inject CPA → 9router")
         print()
         print("    0) Keluar")
         print()
@@ -756,6 +833,9 @@ def menu() -> int:
             cmd_run_register()
             pause()
         elif choice == "7":
+            cmd_mint_cpa()
+            pause()
+        elif choice == "8":
             cmd_inject(tui=True)
             pause()
         else:
@@ -784,6 +864,9 @@ def main() -> int:
     if cmd == "inject":
         cmd_inject(tui=True)
         return 0
+    if cmd in ("mint", "mint-cpa"):
+        cmd_mint_cpa()
+        return 0
     if cmd == "status":
         print_status()
         return 0
@@ -794,7 +877,7 @@ def main() -> int:
     if cmd in ("-h", "--help", "help"):
         print(__doc__)
         return 0
-    print(f"unknown: {cmd}  (setup|run|inject|status|help)")
+    print(f"unknown: {cmd}  (setup|run|mint|inject|status|help)")
     return 1
 
 

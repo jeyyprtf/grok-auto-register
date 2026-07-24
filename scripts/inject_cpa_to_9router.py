@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import uuid
@@ -148,6 +149,65 @@ def list_cpa_files(auth_dir: Path) -> list[Path]:
     return sorted(auth_dir.glob("xai-*.json"))
 
 
+def pick_inject_limit(total: int) -> int:
+    """Ask how many CPA files to inject: all / half / specific. Returns 1..total."""
+    if total <= 0:
+        return 0
+    print(f"  Total file: {total}")
+    print("  1) Semua")
+    print(f"  2) Setengah ({total // 2})")
+    print("  3) Specific number")
+    choice = input("  Jumlah inject? [1]: ").strip() or "1"
+    if choice == "2":
+        return max(1, total // 2) if total >= 1 else 0
+    if choice == "3":
+        raw = input(f"  Berapa file? (1-{total}): ").strip()
+        try:
+            n = int(raw)
+        except ValueError:
+            print("  invalid, pakai semua")
+            return total
+        return max(1, min(n, total))
+    return total
+
+
+def pick_after_action() -> str:
+    """After successful inject: keep | move | delete."""
+    print()
+    print("  File yang sukses inject:")
+    print("  1) Biarkan di cpa_auths")
+    print("  2) Pindah ke folder used/  (recommended)")
+    print("  3) Hapus")
+    choice = input("  Pilih? [2]: ").strip() or "2"
+    return {"1": "keep", "2": "move", "3": "delete"}.get(choice, "move")
+
+
+def cleanup_injected(files: list[Path], action: str, auth_dir: Path) -> list[str]:
+    """keep / move to auth_dir/used / delete. Returns log lines."""
+    if action == "keep" or not files:
+        return []
+    lines: list[str] = []
+    used_dir = auth_dir / "used"
+    if action == "move":
+        used_dir.mkdir(parents=True, exist_ok=True)
+    for p in files:
+        try:
+            if action == "delete":
+                p.unlink(missing_ok=True)
+                lines.append(f"  deleted {p.name}")
+            elif action == "move":
+                dest = used_dir / p.name
+                if dest.exists():
+                    # ponytail: stamp on collision; rare re-inject same email
+                    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+                    dest = used_dir / f"{p.stem}-{stamp}{p.suffix}"
+                shutil.move(str(p), str(dest))
+                lines.append(f"  moved {p.name} → used/{dest.name}")
+        except Exception as e:
+            lines.append(f"  cleanup fail {p.name}: {e}")
+    return lines
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
@@ -195,10 +255,21 @@ def validate_schema(cur: sqlite3.Cursor) -> None:
         )
 
 
-def inject(auth_dir: Path, db_path: Path, *, dry_run: bool = False) -> dict:
+def inject(
+    auth_dir: Path,
+    db_path: Path,
+    *,
+    dry_run: bool = False,
+    limit: int | None = None,
+) -> dict:
     files = list_cpa_files(auth_dir)
     if not files:
         raise FileNotFoundError(f"Tidak ada xai-*.json di: {auth_dir}")
+    total = len(files)
+    if limit is not None:
+        files = files[: max(0, min(limit, total))]
+    if not files:
+        raise FileNotFoundError(f"Limit 0 / tidak ada file terpilih di: {auth_dir}")
     if not db_path.is_file():
         raise FileNotFoundError(f"DB 9router tidak ketemu: {db_path}")
 
@@ -209,6 +280,9 @@ def inject(auth_dir: Path, db_path: Path, *, dry_run: bool = False) -> dict:
 
     inserted = updated = skipped = 0
     lines: list[str] = []
+    ok_files: list[Path] = []
+    if limit is not None and limit < total:
+        lines.append(f"  (limit {len(files)}/{total} file)")
 
     for p in files:
         try:
@@ -236,6 +310,7 @@ def inject(auth_dir: Path, db_path: Path, *, dry_run: bool = False) -> dict:
             else:
                 inserted += 1
                 lines.append(f"  dry-run would insert: {email}")
+            ok_files.append(p)
             continue
 
         payload = json.dumps(data)
@@ -272,6 +347,7 @@ def inject(auth_dir: Path, db_path: Path, *, dry_run: bool = False) -> dict:
             )
             inserted += 1
             lines.append(f"  inserted {email}")
+        ok_files.append(p)
 
     if not dry_run:
         conn.commit()
@@ -288,6 +364,7 @@ def inject(auth_dir: Path, db_path: Path, *, dry_run: bool = False) -> dict:
         "skipped": skipped,
         "active": active,
         "files": len(files),
+        "ok_files": ok_files,
         "lines": lines,
     }
 
@@ -454,7 +531,8 @@ def tui() -> int:
 
         if choice == "4":
             try:
-                result = inject(auth_dir, db_path, dry_run=True)
+                n = pick_inject_limit(len(list_cpa_files(auth_dir)))
+                result = inject(auth_dir, db_path, dry_run=True, limit=n)
                 for line in result["lines"]:
                     print(line)
                 print(
@@ -468,7 +546,9 @@ def tui() -> int:
 
         if choice == "5":
             print()
-            print(f"  Inject {len(list_cpa_files(auth_dir))} file")
+            total = len(list_cpa_files(auth_dir))
+            n = pick_inject_limit(total)
+            print(f"  Inject {n}/{total} file")
             print(f"  ke DB: {db_path}")
             conf = input("  Yakin? [y/N]: ").strip().lower()
             if conf not in ("y", "yes", "ya"):
@@ -476,7 +556,7 @@ def tui() -> int:
                 pause()
                 continue
             try:
-                result = inject(auth_dir, db_path, dry_run=False)
+                result = inject(auth_dir, db_path, dry_run=False, limit=n)
                 for line in result["lines"]:
                     print(line)
                 print(
@@ -485,6 +565,15 @@ def tui() -> int:
                 )
                 print("  Model di 9router: gcli/grok-4.5")
                 save_state(auth_dir, db_path)
+                ok = result.get("ok_files") or []
+                if ok:
+                    action = pick_after_action()
+                    for line in cleanup_injected(ok, action, auth_dir):
+                        print(line)
+                    if action == "move":
+                        print(f"  → used: {auth_dir / 'used'}")
+                    elif action == "delete":
+                        print(f"  → dihapus {len(ok)} file")
             except Exception as e:
                 print(f"  GAGAL: {e}")
             pause()
@@ -541,6 +630,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="CLI inject tanpa konfirmasi",
     )
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maks file inject (default: semua). Contoh: --limit 5",
+    )
+    ap.add_argument(
+        "--half",
+        action="store_true",
+        help="Inject setengah dari total file",
+    )
+    ap.add_argument(
+        "--after",
+        choices=("keep", "move", "delete"),
+        default=None,
+        help="Setelah inject sukses: keep | move (ke used/) | delete",
+    )
     return ap
 
 
@@ -573,8 +679,19 @@ def main() -> int:
     auth_dir = resolve_path(auth_raw)
     db_path = resolve_path(db_raw)
 
+    all_files = list_cpa_files(auth_dir)
+    total = len(all_files)
+    if args.half:
+        limit = max(1, total // 2) if total else 0
+    elif args.limit is not None:
+        limit = max(0, min(args.limit, total))
+    elif sys.stdin.isatty() and not args.yes:
+        limit = pick_inject_limit(total)
+    else:
+        limit = total
+
     if not args.dry_run and not args.yes:
-        print(f"auth-dir: {auth_dir} ({len(list_cpa_files(auth_dir))} files)")
+        print(f"auth-dir: {auth_dir} ({limit}/{total} files)")
         print(f"db:       {db_path}")
         conf = input("Inject? [y/N]: ").strip().lower()
         if conf not in ("y", "yes", "ya"):
@@ -582,7 +699,7 @@ def main() -> int:
             return 1
 
     try:
-        result = inject(auth_dir, db_path, dry_run=args.dry_run)
+        result = inject(auth_dir, db_path, dry_run=args.dry_run, limit=limit)
     except Exception as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -595,6 +712,17 @@ def main() -> int:
     )
     if not args.dry_run:
         save_state(auth_dir, db_path)
+        ok = result.get("ok_files") or []
+        if ok:
+            if args.after:
+                action = args.after
+            elif sys.stdin.isatty() and not args.yes:
+                action = pick_after_action()
+            else:
+                # non-interactive -y: keep (aman, no surprise delete/move)
+                action = "keep"
+            for line in cleanup_injected(ok, action, auth_dir):
+                print(line)
     return 0
 
 

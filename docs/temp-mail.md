@@ -18,7 +18,9 @@ Atau: `python scripts/manage.py setup`
 ## Yang kamu butuh
 
 1. Domain di Cloudflare (DNS active)  
-2. Akun Cloudflare (wrangler login OK)  
+2. Auth Cloudflare:
+   - **Desktop:** `npx wrangler login` (browser)
+   - **VPS/headless:** `CLOUDFLARE_API_TOKEN` — script deteksi otomatis (tanpa DISPLAY) dan minta paste token di awal menu 1
 3. Node/pnpm buat deploy Worker  
 
 ---
